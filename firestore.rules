@@ -1,0 +1,164 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function member(c) { return signedIn() && exists(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid)); }
+    function role(c) { return get(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid)).data.role; }
+    function writer(c) { return member(c) && role(c) in ['owner', 'accountant']; }
+    function owner(c) { return member(c) && role(c) == 'owner'; }
+    function text(value, size) { return value is string && value.size() > 0 && value.size() <= size; }
+    function optionalText(value, size) { return value is string && value.size() <= size; }
+    function amount(value) { return value is int && value > 0 && value <= 100000000000; }
+    function validDate(value) { return value is string && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
+    function stamp(d) { return d.createdBy == request.auth.uid && d.createdAt == request.time; }
+    function audited(c, id) {
+      let a = getAfter(/databases/$(database)/documents/companies/$(c)/audit/$(id)).data;
+      return a.createdBy == request.auth.uid && a.createdAt == request.time;
+    }
+    function accountExists(c, id) { return id is string && exists(/databases/$(database)/documents/companies/$(c)/accounts/$(id)); }
+    function validInvoiceReceipt(c, invoiceId, txId, n) {
+      let before = get(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data;
+      let after = getAfter(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data;
+      return after.lastTxId == txId && after.lastAction == 'payment' && after.paidPaisa == before.paidPaisa + n;
+    }
+    function validInvoiceReversal(c, invoiceId, txId, n) {
+      let before = get(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data;
+      let after = getAfter(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data;
+      return after.lastTxId == txId && after.lastAction == 'reversal' && after.paidPaisa == before.paidPaisa - n;
+    }
+    function validPaymentUpdate(c, invoiceId, d) {
+      let t = getAfter(/databases/$(database)/documents/companies/$(c)/transactions/$(d.lastTxId)).data;
+      return !exists(/databases/$(database)/documents/companies/$(c)/transactions/$(d.lastTxId))
+        && t.invoiceId == invoiceId && t.kind == 'income'
+        && d.paidPaisa == resource.data.paidPaisa + t.amountPaisa;
+    }
+    function validReversalUpdate(c, invoiceId, d) {
+      let t = get(/databases/$(database)/documents/companies/$(c)/transactions/$(d.lastTxId)).data;
+      let r = getAfter(/databases/$(database)/documents/companies/$(c)/reversals/$(d.lastTxId)).data;
+      return !exists(/databases/$(database)/documents/companies/$(c)/reversals/$(d.lastTxId))
+        && r.transactionId == d.lastTxId && r.createdAt == request.time
+        && t.invoiceId == invoiceId && d.paidPaisa == resource.data.paidPaisa - t.amountPaisa;
+    }
+    match /companies/{companyId} {
+      // A signed-in user may check a new workspace ID; existing company details require membership.
+      allow get: if signedIn() && (!exists(/databases/$(database)/documents/companies/$(companyId)) || member(companyId));
+      allow list: if false;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['name', 'currency', 'timezone', 'ownerUid', 'createdAt'])
+        && text(request.resource.data.name, 100)
+        && request.resource.data.currency == 'PKR'
+        && request.resource.data.timezone == 'Asia/Karachi'
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid)).data.role == 'owner';
+      allow update: if owner(companyId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+        && text(request.resource.data.name, 100);
+      allow delete: if false;
+      match /members/{userId} {
+        allow get: if signedIn() && (request.auth.uid == userId || owner(companyId));
+        allow list: if owner(companyId);
+        // Only the initial owner can bootstrap their membership with the company in one batch.
+        // Additional users are provisioned by a trusted administrator through the Firebase console.
+        allow create: if signedIn() && userId == request.auth.uid
+          && !exists(/databases/$(database)/documents/companies/$(companyId))
+          && getAfter(/databases/$(database)/documents/companies/$(companyId)).data.ownerUid == request.auth.uid
+          && request.resource.data.keys().hasOnly(['role', 'email', 'createdAt'])
+          && request.resource.data.role == 'owner'
+          && request.resource.data.email == request.auth.token.email
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+      match /accounts/{id} {
+        allow read: if member(companyId);
+        allow create: if writer(companyId)
+          && request.resource.data.keys().hasOnly(['id','name','type','openingPaisa','createdAt','createdBy'])
+          && request.resource.data.id == id && stamp(request.resource.data)
+          && text(request.resource.data.name,80)
+          && request.resource.data.type in ['Bank','Cash','Wallet']
+          && request.resource.data.openingPaisa is int
+          && request.resource.data.openingPaisa >= 0 && request.resource.data.openingPaisa <= 100000000000
+          && audited(companyId,id);
+        allow update, delete: if false;
+      }
+      match /employees/{id} {
+        allow read: if member(companyId);
+        allow create: if writer(companyId)
+          && request.resource.data.keys().hasOnly(['id','name','role','salaryPaisa','email','joined','createdAt','createdBy'])
+          && request.resource.data.id == id && stamp(request.resource.data)
+          && text(request.resource.data.name,120) && text(request.resource.data.role,120)
+          && amount(request.resource.data.salaryPaisa)
+          && optionalText(request.resource.data.email,254) && validDate(request.resource.data.joined)
+          && audited(companyId,id);
+        allow update, delete: if false;
+      }
+      match /transactions/{id} {
+        allow read: if member(companyId);
+        allow create: if writer(companyId)
+          && request.resource.data.keys().hasOnly(['id','kind','amountPaisa','date','description','category','party','accountId','toAccountId','employeeId','invoiceId','createdAt','createdBy'])
+          && request.resource.data.id == id && stamp(request.resource.data)
+          && request.resource.data.kind in ['income','expense','funding','drawing','transfer','salary']
+          && amount(request.resource.data.amountPaisa) && validDate(request.resource.data.date)
+          && text(request.resource.data.description,180) && text(request.resource.data.category,80)
+          && optionalText(request.resource.data.party,120)
+          && accountExists(companyId,request.resource.data.accountId)
+          && ((request.resource.data.kind == 'transfer'
+               && accountExists(companyId,request.resource.data.toAccountId)
+               && request.resource.data.toAccountId != request.resource.data.accountId)
+              || (request.resource.data.kind != 'transfer' && request.resource.data.toAccountId == ''))
+          && ((request.resource.data.kind == 'salary'
+               && exists(/databases/$(database)/documents/companies/$(companyId)/employees/$(request.resource.data.employeeId)))
+              || (request.resource.data.kind != 'salary' && request.resource.data.employeeId == ''))
+          && (request.resource.data.invoiceId == ''
+              || (request.resource.data.kind == 'income'
+                  && validInvoiceReceipt(companyId,request.resource.data.invoiceId,id,request.resource.data.amountPaisa)))
+          && audited(companyId,id);
+        allow update, delete: if false;
+      }
+      match /reversals/{id} {
+        allow read: if member(companyId);
+        allow create: if writer(companyId)
+          && request.resource.data.keys().hasOnly(['transactionId','reason','createdAt','createdBy'])
+          && request.resource.data.transactionId == id && stamp(request.resource.data)
+          && text(request.resource.data.reason,300)
+          && exists(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id))
+          && (get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.invoiceId == ''
+              || validInvoiceReversal(companyId,
+                 get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.invoiceId,
+                 id,get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.amountPaisa))
+          && audited(companyId,'reverse-' + id);
+        allow update, delete: if false;
+      }
+      match /invoices/{id} {
+        allow read: if member(companyId);
+        allow create: if writer(companyId)
+          && request.resource.data.keys().hasOnly(['id','number','client','email','title','amountPaisa','paidPaisa','issued','due','revision','lastTxId','lastAction','createdAt','createdBy'])
+          && request.resource.data.id == id && stamp(request.resource.data)
+          && text(request.resource.data.number,40) && text(request.resource.data.client,120)
+          && optionalText(request.resource.data.email,254) && text(request.resource.data.title,120)
+          && amount(request.resource.data.amountPaisa) && request.resource.data.paidPaisa == 0
+          && request.resource.data.revision == 0 && request.resource.data.lastTxId == '' && request.resource.data.lastAction == ''
+          && validDate(request.resource.data.issued) && validDate(request.resource.data.due)
+          && request.resource.data.due >= request.resource.data.issued
+          && audited(companyId,id);
+        allow update: if writer(companyId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidPaisa','revision','lastTxId','lastAction'])
+          && request.resource.data.paidPaisa is int && request.resource.data.paidPaisa >= 0
+          && request.resource.data.paidPaisa <= resource.data.amountPaisa
+          && request.resource.data.revision == resource.data.revision + 1
+          && ((request.resource.data.lastAction == 'payment' && validPaymentUpdate(companyId,id,request.resource.data))
+              || (request.resource.data.lastAction == 'reversal' && validReversalUpdate(companyId,id,request.resource.data)));
+        allow delete: if false;
+      }
+      match /audit/{id} {
+        allow read: if member(companyId);
+        allow create: if writer(companyId)
+          && request.resource.data.keys().hasOnly(['id','action','detail','createdAt','createdBy'])
+          && request.resource.data.id == id && stamp(request.resource.data)
+          && text(request.resource.data.action,80) && optionalText(request.resource.data.detail,500);
+        allow update, delete: if false;
+      }
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
