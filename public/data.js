@@ -1,5 +1,64 @@
-import {uid,today,validateTransaction,validateInvoice,DEFAULT_BANK_INFO} from './domain.js';
+import {uid,today,addDays,validateTransaction,validateInvoice,validateClient,DEFAULT_BANK_INFO} from './domain.js';
 const KEY='metrisolution.khata.demo.v2';
+
+export const DEFAULT_CLIENTS = [
+  {
+    id: 'client-yelo',
+    name: 'Yelo Beta',
+    contactPerson: 'Hamza Farooq',
+    email: 'finance@yelobeta.com',
+    phone: '+92 300 4829102',
+    city: 'Karachi',
+    type: 'monthly',
+    serviceName: 'Digital Marketing Package MetGrow',
+    monthlyRatePaisa: 2500000,
+    monthlyDiscountPaisa: 0,
+    billingDay: 1,
+    autoInvoice: true,
+    paymentTerms: '1872',
+    status: 'active',
+    lastInvoicedMonth: today().slice(0, 7)
+  },
+  {
+    id: 'client-luma',
+    name: 'Luma Commerce',
+    contactPerson: 'Sara Tariq',
+    email: 'accounts@lumacommerce.com',
+    phone: '+92 321 9845120',
+    city: 'Lahore',
+    type: 'one-time',
+    serviceName: 'E-Commerce Website Development · Custom Store',
+    status: 'active'
+  },
+  {
+    id: 'client-northstar',
+    name: 'Northstar Studio',
+    contactPerson: 'Bilal Sheikh',
+    email: 'billing@northstar.pk',
+    phone: '+92 333 5512498',
+    city: 'Islamabad',
+    type: 'monthly',
+    serviceName: 'Website Maintenance Service · Pro Care',
+    monthlyRatePaisa: 3200000,
+    monthlyDiscountPaisa: 0,
+    billingDay: 1,
+    autoInvoice: true,
+    paymentTerms: 'Net 15',
+    status: 'active',
+    lastInvoicedMonth: today().slice(0, 7)
+  },
+  {
+    id: 'client-orbit',
+    name: 'Orbit Creative',
+    contactPerson: 'Usman Ghani',
+    email: 'contact@orbitcreative.co',
+    phone: '+92 345 7712390',
+    city: 'Karachi',
+    type: 'one-time',
+    serviceName: 'Corporate Multi-Page Website',
+    status: 'active'
+  }
+];
 
 export const DEFAULT_SERVICES = [
   {
@@ -135,6 +194,7 @@ export function emptyState(name='MetriSolution Pvt LTD') {
     reversals: [],
     invoices: [],
     employees: [],
+    clients: [],
     services: structuredClone(DEFAULT_SERVICES),
     audit: []
   };
@@ -144,6 +204,8 @@ export function demoState() {
   const s = emptyState();
   const month = today().slice(0, 7), day = Number(today().slice(8));
   const date = d => `${month}-${String(Math.min(d, day)).padStart(2, '0')}`;
+
+  s.clients = structuredClone(DEFAULT_CLIENTS);
 
   s.accounts = [
     { id: 'bank', name: 'United Bank Limited', type: 'Bank', openingPaisa: 16000000 },
@@ -161,14 +223,18 @@ export function demoState() {
     {
       id: 'inv-0230',
       number: '0230',
+      clientId: 'client-yelo',
       client: 'Yelo Beta',
       email: 'finance@yelobeta.com',
       title: 'Digital Marketing Package MetGrow',
+      subtotalPaisa: 2500000,
+      discountPaisa: 0,
       amountPaisa: 2500000,
       paidPaisa: 1250000,
       issued: date(1),
       due: date(28),
       paymentTerms: '1872',
+      isMonthlyRecurring: true,
       revision: 1,
       items: [
         { description: 'Digital Marketing Package MetGrow', quantity: 1, ratePaisa: 2500000, amountPaisa: 2500000 }
@@ -178,9 +244,12 @@ export function demoState() {
     {
       id: 'inv-1',
       number: 'MS-SAMPLE-001',
+      clientId: 'client-luma',
       client: 'Luma Commerce',
       email: 'accounts@lumacommerce.com',
       title: 'Storefront development',
+      subtotalPaisa: 10000000,
+      discountPaisa: 0,
       amountPaisa: 10000000,
       paidPaisa: 6500000,
       issued: date(1),
@@ -194,14 +263,18 @@ export function demoState() {
     {
       id: 'inv-2',
       number: 'MS-SAMPLE-002',
+      clientId: 'client-northstar',
       client: 'Northstar Studio',
       email: '',
       title: 'Website maintenance',
+      subtotalPaisa: 3200000,
+      discountPaisa: 0,
       amountPaisa: 3200000,
       paidPaisa: 3200000,
       issued: date(2),
       due: date(15),
       paymentTerms: 'Net 15',
+      isMonthlyRecurring: true,
       revision: 1,
       items: [
         { description: 'Pro Care & Optimization Monthly Maintenance', quantity: 1, ratePaisa: 3200000, amountPaisa: 3200000 }
@@ -210,9 +283,12 @@ export function demoState() {
     {
       id: 'inv-3',
       number: 'MS-SAMPLE-003',
+      clientId: 'client-orbit',
       client: 'Orbit Creative',
       email: '',
       title: 'Brand website · final milestone',
+      subtotalPaisa: 7500000,
+      discountPaisa: 0,
       amountPaisa: 7500000,
       paidPaisa: 0,
       issued: date(10),
@@ -411,6 +487,93 @@ export class DemoStore {
       s.reversals.push({ transactionId: id, reason, createdBy: this.user.uid, createdAt: new Date().toISOString() });
       if (t.invoiceId) s.invoices.find(i => i.id === t.invoiceId).paidPaisa -= t.amountPaisa;
     });
+  }
+
+  async addClient(client) {
+    validateClient(client);
+    const id = client.id || ('client-' + uid().slice(0, 8));
+    return this.mutate('Client added', `${client.name} · ${client.type}`, s => {
+      s.clients = s.clients || [];
+      s.clients.push({
+        ...client,
+        id,
+        status: client.status || 'active',
+        createdAt: new Date().toISOString()
+      });
+    });
+  }
+
+  async updateClient(id, patch) {
+    const c = (this.state.clients || []).find(c => c.id === id);
+    if (!c) throw new Error('Client not found.');
+    return this.mutate('Client updated', c.name, s => {
+      const idx = s.clients.findIndex(x => x.id === id);
+      if (idx !== -1) {
+        s.clients[idx] = { ...s.clients[idx], ...patch };
+      }
+    });
+  }
+
+  async deleteClient(id) {
+    const c = (this.state.clients || []).find(c => c.id === id);
+    if (!c) throw new Error('Client not found.');
+    return this.mutate('Client removed', c.name, s => {
+      s.clients = (s.clients || []).filter(x => x.id !== id);
+    });
+  }
+
+  async runMonthlyInvoicing(targetMonth = null) {
+    const currentMonth = targetMonth || today().slice(0, 7);
+    const monthDate = `${currentMonth}-01`;
+    const dueDate = addDays(monthDate, 15);
+    const monthName = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date(monthDate + 'T12:00:00Z'));
+    
+    const generated = [];
+    await this.mutate('AI Monthly Invoicing', `Automated billing check for ${monthName}`, s => {
+      s.clients = s.clients || [];
+      const retainers = s.clients.filter(c => c.type === 'monthly' && c.status === 'active' && c.autoInvoice !== false);
+      for (const client of retainers) {
+        const alreadyInvoiced = s.invoices.some(i => 
+          (i.clientId === client.id || (i.client && i.client.trim().toLowerCase() === client.name.trim().toLowerCase())) &&
+          i.issued && i.issued.startsWith(currentMonth)
+        );
+        if (!alreadyInvoiced) {
+          const invId = uid();
+          const invNum = '0' + (s.invoices.length + 231);
+          const rate = client.monthlyRatePaisa || 2500000;
+          const discount = client.monthlyDiscountPaisa || 0;
+          const total = Math.max(0, rate - discount);
+          const serviceTitle = client.serviceName || 'Monthly Retainer Service';
+          const itemDesc = `${serviceTitle} · Monthly Retainer (${monthName})`;
+
+          const newInv = {
+            id: invId,
+            number: invNum,
+            clientId: client.id,
+            client: client.name,
+            email: client.email || '',
+            title: `Monthly Retainer: ${serviceTitle} (${monthName})`,
+            subtotalPaisa: rate,
+            discountPaisa: discount,
+            amountPaisa: total,
+            paidPaisa: 0,
+            issued: monthDate,
+            due: dueDate,
+            paymentTerms: client.paymentTerms || 'Net 15',
+            isMonthlyRecurring: true,
+            revision: 0,
+            items: [
+              { description: itemDesc, quantity: 1, ratePaisa: rate, amountPaisa: rate }
+            ],
+            bankInfo: { ...(s.company.bankInfo || DEFAULT_BANK_INFO) }
+          };
+          s.invoices.push(newInv);
+          client.lastInvoicedMonth = currentMonth;
+          generated.push(newInv);
+        }
+      }
+    });
+    return generated;
   }
 
   async addService(service) {

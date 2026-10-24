@@ -1,5 +1,5 @@
-import {DemoStore, DEFAULT_SERVICES} from './data.js';
-import {money,fullMoney,toPaisa,today,uid,balances,summary,activeTransactions,inPeriod,cashflow,expenseGroups,csv,invoiceStatus,CATEGORIES,DEFAULT_BANK_INFO} from './domain.js';
+import {DemoStore, DEFAULT_SERVICES, DEFAULT_CLIENTS} from './data.js';
+import {money,fullMoney,toPaisa,today,uid,addDays,formatInvoiceNote,balances,summary,activeTransactions,inPeriod,cashflow,expenseGroups,csv,invoiceStatus,CATEGORIES,DEFAULT_BANK_INFO} from './domain.js';
 import {firebaseConfig} from './firebase-config.js';
 
 const $=s=>document.querySelector(s), app=$('#app');
@@ -50,6 +50,7 @@ const paths={
   eye:'<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
   eyeoff:'<path d="M9.88 9.88a3 3 0 1 0 4.24 4.24M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61M2 2l20 20"/>',
   user:'<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+  repeat:'<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
   building:'<rect x="4" y="2" width="16" height="20" rx="2" ry="2"/><path d="M9 22v-4h6v4M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/>',
   trash:'<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
 };
@@ -60,6 +61,7 @@ const pageNames={
   transactions:'Transactions',
   accounts:'Company accounts',
   invoices:'Invoices &amp; receivables',
+  clients:'Clients &amp; Retainers',
   services:'Services &amp; Packages',
   team:'Team &amp; payroll',
   reports:'Business reports',
@@ -70,7 +72,7 @@ const kindNames={income:'Income',expense:'Expense',funding:'Owner funding',drawi
 const colors=['#7038db','#f59e0b','#3b82f6','#a855f7','#10b981','#6366f1','#ec4899'];
 
 let store=new DemoStore(), state=store.state, unsubscribe, period='month', query='', kindFilter='all', accountFilter='all', showReversed=false, menuOpen=false, toastTimer, lastFocus;
-let authTab='login', previousAuth={}, showPassword=false, showConfigDrawer=false, serviceFilter='all';
+let authTab='login', previousAuth={}, showPassword=false, showConfigDrawer=false, serviceFilter='all', clientFilter='all';
 
 function safeStorage(key,value){
   try{
@@ -330,6 +332,7 @@ function renderDashboard(page){
         ${[
           ['overview','grid','Financial overview'],
           ['invoices','invoice','Invoices &amp; receivables'],
+          ['clients','user','Clients &amp; Retainers'],
           ['services','layers','Services &amp; Packages'],
           ['transactions','transactions','Transactions'],
           ['accounts','wallet','Company accounts'],
@@ -432,6 +435,7 @@ function renderPage(page){
     transactions: transactionsPage,
     accounts: accountsPage,
     invoices: invoicesPage,
+    clients: clientsPage,
     services: servicesPage,
     team: teamPage,
     reports: reportsPage,
@@ -755,6 +759,7 @@ function invoicesPage(){
   const outstanding=state.invoices.reduce((a,i)=>a+i.amountPaisa-i.paidPaisa,0);
 
   return `${intro('Invoices &amp; receivables','Keep track of client balances, payment terms and official PDF invoices.',`
+    <a class="btn" href="#clients">${icon('user')}Clients &amp; Retainers</a>
     <a class="btn" href="#services">${icon('layers')}Services &amp; Packages</a>
     ${primary('create-invoice','Create Invoice (Generator)','plus')}
   `)}
@@ -777,14 +782,17 @@ function invoicesPage(){
         <h2>Client invoices</h2>
         <p class="card-subtitle">Generate, record partial payments and export professional PDF invoices</p>
       </div>
-      <span class="pill">${state.invoices.length} total</span>
+      <div style="display:flex;gap:10px;align-items:center">
+        <button class="btn" data-action="run-monthly-invoicing" style="font-size:11px">${icon('spark')}Run AI Monthly Invoicing</button>
+        <span class="pill">${state.invoices.length} total</span>
+      </div>
     </div>
     <div class="table-scroll">
       <table>
         <thead>
           <tr>
             <th>INVOICE / CLIENT</th>
-            <th>DUE DATE</th>
+            <th>DUE DATE (AUTO 15D)</th>
             <th>TOTAL · PKR</th>
             <th>OUTSTANDING</th>
             <th>STATUS</th>
@@ -796,7 +804,8 @@ function invoicesPage(){
             <tr>
               <td>
                 <button class="link-button invoice-number" data-action="view-invoice" data-id="${i.id}"># ${e(i.number)}</button>
-                <div class="muted small">${e(i.client)}</div>
+                <div class="muted small">${e(i.client)} ${i.isMonthlyRecurring?`<span class="pill" style="font-size:10px;background:var(--purple-subtle);color:var(--purple);margin-left:4px">Monthly Retainer</span>`:''}</div>
+                ${i.discountPaisa>0?`<div class="muted small" style="color:#e11d48">Discount: PKR ${money(i.discountPaisa)}</div>`:''}
               </td>
               <td class="muted">${dateLabel(i.due)}</td>
               <td class="amount">${money(i.amountPaisa)}</td>
@@ -821,6 +830,297 @@ function invoicesPage(){
     </div>
     ${!state.invoices.length?empty('Create your first client invoice.','invoice'):''}
   </section>`;
+}
+
+/* ==========================================================================
+   CLIENTS & MONTHLY RETAINERS PAGE
+   ========================================================================== */
+function clientsPage(){
+  const allClients = state.clients || [];
+  const monthlyClients = allClients.filter(c => c.type === 'monthly');
+  const projectClients = allClients.filter(c => c.type === 'one-time');
+  const mrrPaisa = monthlyClients.filter(c => c.status === 'active').reduce((a, c) => a + (c.monthlyRatePaisa || 0), 0);
+
+  const displayedClients = clientFilter === 'monthly' ? monthlyClients :
+    clientFilter === 'one-time' ? projectClients : allClients;
+
+  return `${intro('Clients &amp; Monthly Retainers', 'Manage client profiles, monthly recurring service retainers and automated 1st-of-month AI invoicing.', `
+    <button class="btn" data-action="run-monthly-invoicing">${icon('spark')}Run AI Monthly Invoicing</button>
+    ${primary('add-client', 'Add New Client', 'plus')}
+  `)}
+  ${statusStrip(false)}
+
+  <div class="report-stats">
+    <section class="card settings-card" style="border-top:3px solid var(--purple)">
+      <p class="muted small">Monthly Recurring Revenue (MRR)</p>
+      <div class="report-number">${fullMoney(mrrPaisa)}<span style="font-size:13px;font-weight:500;color:var(--muted)"> / month</span></div>
+    </section>
+    <section class="card settings-card" style="border-top:3px solid var(--blue)">
+      <p class="muted small">Active Monthly Retainers</p>
+      <div class="report-number">${monthlyClients.filter(c=>c.status==='active').length} <span style="font-size:13px;font-weight:500;color:var(--muted)">clients</span></div>
+    </section>
+    <section class="card settings-card" style="border-top:3px solid var(--emerald)">
+      <p class="muted small">Total Registered Clients</p>
+      <div class="report-number">${allClients.length} <span style="font-size:13px;font-weight:500;color:var(--muted)">companies</span></div>
+    </section>
+  </div>
+
+  <div class="services-nav" style="margin-bottom:20px">
+    <button class="btn ${clientFilter==='all'?'primary':''}" data-action="filter-clients" data-filter="all">
+      All Clients (${allClients.length})
+    </button>
+    <button class="btn ${clientFilter==='monthly'?'primary':''}" data-action="filter-clients" data-filter="monthly">
+      ${icon('repeat')}Monthly Retainers (${monthlyClients.length})
+    </button>
+    <button class="btn ${clientFilter==='one-time'?'primary':''}" data-action="filter-clients" data-filter="one-time">
+      One-Time Projects (${projectClients.length})
+    </button>
+  </div>
+
+  <section class="card table-card">
+    <div class="card-header">
+      <div>
+        <h2>${clientFilter==='monthly'?'Monthly Retainer Clients (Recurring Services)':clientFilter==='one-time'?'One-Time Project Clients':'All Client Accounts'}</h2>
+        <p class="card-subtitle">${clientFilter==='monthly'?'Clients billed automatically on the 1st of each month with 15-day payment terms':'Complete client profiles with contact details, billing engagement and service packages'}</p>
+      </div>
+      <div style="display:flex;gap:8px">
+        <a class="btn" href="#invoices">${icon('invoice')}View All Invoices</a>
+      </div>
+    </div>
+
+    ${displayedClients.length ? `
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>CLIENT / COMPANY</th>
+              <th>CONTACT &amp; WHATSAPP</th>
+              <th>SERVICE / PACKAGE</th>
+              <th>BILLING MODEL</th>
+              <th>RATE / MRR</th>
+              <th>STATUS / 1ST OF MONTH</th>
+              <th>ACTIONS</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${displayedClients.map(c => {
+              const clientInvoices = (state.invoices||[]).filter(i => i.clientId === c.id || (i.client && i.client.trim().toLowerCase() === c.name.trim().toLowerCase()));
+              const cleanPhone = (c.phone||'').replace(/[^0-9]/g,'');
+              return `<tr>
+                <td>
+                  <strong style="font-size:14px;color:var(--ink)">${e(c.name)}</strong>
+                  <div class="muted small">${e(c.city || 'Pakistan')} · ${clientInvoices.length} invoices</div>
+                </td>
+                <td>
+                  <div>${e(c.contactPerson || 'Account Manager')}</div>
+                  <div style="display:flex;gap:6px;align-items:center;margin-top:2px">
+                    ${c.email ? `<span class="muted small">${e(c.email)}</span>` : ''}
+                    ${cleanPhone ? `<a href="https://wa.me/${cleanPhone}" target="_blank" rel="noopener" class="pill" style="font-size:10px;text-decoration:none;background:#25d36615;color:#16a34a;border:1px solid #25d36640">WhatsApp</a>` : ''}
+                  </div>
+                </td>
+                <td>
+                  <strong>${e(c.serviceName || (c.type==='monthly'?'Monthly Retainer':'Custom Project'))}</strong>
+                  ${c.monthlyDiscountPaisa > 0 ? `<div class="muted small" style="color:#e11d48">Discount: PKR ${money(c.monthlyDiscountPaisa)}/mo</div>` : ''}
+                </td>
+                <td>
+                  ${c.type==='monthly' ? `
+                    <span class="pill" style="background:var(--purple-subtle);color:var(--purple);border:1px solid var(--purple-border);font-weight:600">
+                      ${icon('repeat')}Monthly (1st)
+                    </span>
+                  ` : `
+                    <span class="pill">One-Time</span>
+                  `}
+                </td>
+                <td class="amount">
+                  ${c.type==='monthly' ? `<strong>PKR ${money(c.monthlyRatePaisa)}</strong><span class="muted small">/mo</span>` : '<span class="muted">Per Milestone</span>'}
+                </td>
+                <td>
+                  <div style="display:flex;flex-direction:column;gap:4px">
+                    <span class="badge ${c.status==='active'?'Paid':'Unpaid'}">${c.status==='active'?'Active':'Paused'}</span>
+                    ${c.type==='monthly' ? `<span class="muted small" style="font-size:10px">Auto 15d Due</span>` : ''}
+                  </div>
+                </td>
+                <td>
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <button class="btn" style="padding:4px 8px;font-size:11px" data-action="create-client-invoice" data-id="${c.id}" title="Generate invoice for this client">
+                      ${icon('invoice')}Invoice
+                    </button>
+                    <button class="icon-button" data-action="edit-client" data-id="${c.id}" title="Edit client profile">
+                      ${icon('settings')}
+                    </button>
+                    <button class="icon-button" data-action="delete-client" data-id="${c.id}" title="Delete client">
+                      ${icon('trash')}
+                    </button>
+                  </div>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+    ` : empty('No clients found in this view. Click "Add New Client" to register one.', 'user')}
+  </section>`;
+}
+
+function showAddClient(clientId = null){
+  if(!canWrite()) return;
+  const client = clientId ? (state.clients||[]).find(c=>c.id===clientId) : null;
+  const services = state.services || DEFAULT_SERVICES;
+
+  const flatPackages = [];
+  services.forEach(s=>{
+    (s.packages||[]).forEach(p=>{
+      flatPackages.push({
+        label: `${s.name} · ${p.name} (PKR ${money(p.pricePaisa)} / ${p.billing||'Billing'})`,
+        name: `${s.name} - ${p.name}`,
+        rate: (p.pricePaisa/100).toFixed(2)
+      });
+    });
+  });
+
+  const formBody = `<form id="client-form">
+    <div class="form-grid">
+      ${field('Business / Client Name','name','text',client?.name||'','required maxlength="120" placeholder="e.g. Yelo Beta"')}
+      ${field('Contact Person','contactPerson','text',client?.contactPerson||'','placeholder="e.g. Hamza Farooq"')}
+      ${field('Client Email','email','email',client?.email||'','placeholder="finance@yelobeta.com"')}
+      ${field('Phone / WhatsApp','phone','text',client?.phone||'','placeholder="+92 300 1234567"')}
+    </div>
+
+    <div class="field" style="margin-top:10px">
+      <label for="f-client-city">City / Address</label>
+      <input id="f-client-city" name="city" value="${e(client?.city||'Karachi, Pakistan')}" placeholder="e.g. Karachi, Pakistan">
+    </div>
+
+    <div class="form-grid" style="margin-top:10px">
+      <div class="field">
+        <label for="f-client-type">Billing Engagement Model</label>
+        <select id="f-client-type" name="type" required>
+          <option value="monthly" ${client?.type!=='one-time'?'selected':''}>Monthly Retainer (Recurring Service)</option>
+          <option value="one-time" ${client?.type==='one-time'?'selected':''}>One-Time Project</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-client-status">Subscription Status</label>
+        <select id="f-client-status" name="status">
+          <option value="active" ${client?.status!=='paused'?'selected':''}>Active</option>
+          <option value="paused" ${client?.status==='paused'?'selected':''}>Paused</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="monthly-options-box" style="margin-top:14px;background:var(--surface-alt);border:1px solid var(--purple-border);border-radius:10px;padding:16px;${client?.type==='one-time'?'display:none':''}">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <span style="color:var(--purple)">${icon('repeat')}</span>
+        <strong style="font-size:13px;color:var(--ink)">Monthly Retainer Configuration</strong>
+        <span class="pill" style="font-size:10px;background:var(--purple-subtle);color:var(--purple);margin-left:auto">Auto 1st of Month</span>
+      </div>
+
+      <div class="field" style="margin-bottom:10px">
+        <label for="f-pkg-quick">Select Monthly Service Package</label>
+        <select id="f-pkg-quick" style="height:36px;font-size:12px">
+          <option value="">+ Choose from MetriSolution 9 Services…</option>
+          ${flatPackages.map((p,idx)=>`<option value="${idx}">${e(p.label)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="field" style="margin-bottom:10px">
+        <label for="f-service-name">Service / Retainer Description</label>
+        <input id="f-service-name" name="serviceName" value="${e(client?.serviceName||'Digital Marketing Package MetGrow')}" placeholder="e.g. Social Media Marketing or Website Maintenance">
+      </div>
+
+      <div class="form-grid">
+        <div class="field">
+          <label for="f-monthly-rate">Monthly Fee (PKR)</label>
+          <input id="f-monthly-rate" name="monthlyRate" type="number" min="1" step="0.01" value="${client?.monthlyRatePaisa?(client.monthlyRatePaisa/100).toFixed(2):'25000.00'}" required>
+        </div>
+        <div class="field">
+          <label for="f-monthly-discount">Monthly Discount (PKR)</label>
+          <input id="f-monthly-discount" name="monthlyDiscount" type="number" min="0" step="0.01" value="${client?.monthlyDiscountPaisa?(client.monthlyDiscountPaisa/100).toFixed(2):'0.00'}">
+        </div>
+      </div>
+
+      <div class="form-grid" style="margin-top:10px">
+        <div class="field">
+          <label for="f-billing-day">Billing Cycle Day</label>
+          <input id="f-billing-day" name="billingDay" value="1" readonly style="background:var(--surface);cursor:not-allowed">
+          <small class="muted">Generated on the 1st of each month</small>
+        </div>
+        <div class="field">
+          <label for="f-payment-terms">Payment Terms</label>
+          <input id="f-payment-terms" name="paymentTerms" value="${e(client?.paymentTerms||'Net 15')}" placeholder="Net 15">
+          <small class="muted">Auto 15 days due date</small>
+        </div>
+      </div>
+
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--ink);cursor:pointer">
+        <input type="checkbox" name="autoInvoice" ${client?.autoInvoice!==false?'checked':''}>
+        <strong>Auto-generate invoice by AI on the 1st of each month</strong>
+      </label>
+    </div>
+
+    <div class="field" style="margin-top:14px">
+      <label for="f-client-notes">Notes &amp; Project Requirements</label>
+      <input id="f-client-notes" name="notes" value="${e(client?.notes||'')}" placeholder="Internal notes or specific deliverables...">
+    </div>
+
+    ${formEnd(client?'Update Client':'Save Client Profile')}
+  </form>`;
+
+  modal(client ? 'Edit Client Profile' : 'New Client & Retainer Profile', 'Set up client contact, monthly recurring service retainers and automated 1st-of-month invoicing.', formBody, {
+    wide: true,
+    submit: async d => {
+      const type = d.get('type');
+      const rateVal = d.get('monthlyRate');
+      const discVal = d.get('monthlyDiscount');
+      const monthlyRatePaisa = (type === 'monthly' && rateVal) ? toPaisa(rateVal) : 0;
+      const monthlyDiscountPaisa = (type === 'monthly' && discVal && Number(discVal) > 0) ? toPaisa(discVal) : 0;
+
+      const clientData = {
+        name: d.get('name').trim(),
+        contactPerson: d.get('contactPerson')?.trim() || '',
+        email: d.get('email')?.trim() || '',
+        phone: d.get('phone')?.trim() || '',
+        city: d.get('city')?.trim() || 'Karachi, Pakistan',
+        type: type,
+        status: d.get('status') || 'active',
+        serviceName: d.get('serviceName')?.trim() || '',
+        monthlyRatePaisa: monthlyRatePaisa,
+        monthlyDiscountPaisa: monthlyDiscountPaisa,
+        billingDay: 1,
+        paymentTerms: d.get('paymentTerms')?.trim() || 'Net 15',
+        autoInvoice: d.get('autoInvoice') === 'on',
+        notes: d.get('notes')?.trim() || ''
+      };
+
+      if(client){
+        await store.updateClient(client.id, clientData);
+        toast(`Client profile for "${clientData.name}" updated.`);
+      }else{
+        await store.addClient(clientData);
+        toast(`New client "${clientData.name}" added successfully.`);
+      }
+      closeModal();
+      render();
+    }
+  });
+
+  $('#f-client-type')?.addEventListener('change', ev => {
+    const box = $('#monthly-options-box');
+    if(box) box.style.display = ev.target.value === 'monthly' ? 'block' : 'none';
+  });
+
+  $('#f-pkg-quick')?.addEventListener('change', ev => {
+    const idx = ev.target.value;
+    if(idx !== ''){
+      const pkg = flatPackages[Number(idx)];
+      if(pkg){
+        const srvInp = $('#f-service-name');
+        const rateInp = $('#f-monthly-rate');
+        if(srvInp) srvInp.value = pkg.name;
+        if(rateInp) rateInp.value = pkg.rate;
+      }
+    }
+  });
 }
 
 /* ==========================================================================
@@ -1175,11 +1475,12 @@ function ensureAccounts(){
 /* ==========================================================================
    INVOICE GENERATOR & PREVIEW SYSTEM (EXACT INVOICE-GENERATOR.COM STYLE)
    ========================================================================== */
-function showInvoiceCreator(defaultItemDesc='', defaultRate=''){
+function showInvoiceCreator(defaultItemDesc='', defaultRate='', defaultClientId=''){
   if(!canWrite()) return;
   const bank = state.company.bankInfo || DEFAULT_BANK_INFO;
   const services = state.services || DEFAULT_SERVICES;
   const nextNum = '0' + (state.invoices.length + 231);
+  const defaultDueDate = addDays(today(), 15);
 
   const flatPackages = [];
   services.forEach(s=>{
@@ -1193,11 +1494,22 @@ function showInvoiceCreator(defaultItemDesc='', defaultRate=''){
   });
 
   const formBody = `<form id="invoice-builder-form">
+    <div style="margin-bottom:14px;background:var(--surface-alt);border:1px solid var(--purple-border);border-radius:8px;padding:10px 14px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+      <div>
+        <strong style="font-size:12px;color:var(--ink)">Client Profile Quick-Select:</strong>
+        <div class="muted small">Quick-fill registered clients and monthly retainers</div>
+      </div>
+      <select id="quick-client-picker" style="height:32px;font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid var(--line);background:var(--surface)">
+        <option value="">+ Manual / Custom Client</option>
+        ${(state.clients||[]).map(c=>`<option value="${c.id}" ${defaultClientId===c.id?'selected':''}>${e(c.name)} (${c.type==='monthly'?'Monthly Retainer':'One-Time Project'})</option>`).join('')}
+      </select>
+    </div>
+
     <div class="form-grid">
       ${field('Invoice #','number','text',nextNum,'required')}
       ${field('Issue Date','issued','date',today(),'required')}
-      ${field('Payment Terms','paymentTerms','text','1872','placeholder="e.g. 1872 or Net 15"')}
-      ${field('Due Date','due','date',today(),'required')}
+      ${field('Payment Terms','paymentTerms','text','Net 15','placeholder="e.g. Net 15 or 1872"')}
+      ${field('Due Date (Auto 15 Days)','due','date',defaultDueDate,'required')}
     </div>
 
     <div class="form-grid" style="margin-top:10px">
@@ -1244,6 +1556,10 @@ function showInvoiceCreator(defaultItemDesc='', defaultRate=''){
         <div class="line-sum">
           <span>Subtotal:</span>
           <strong id="calc-subtotal">PKR 25,000.00</strong>
+        </div>
+        <div class="line-sum" style="align-items:center">
+          <label style="font-size:12px;color:var(--muted)">Discount (PKR):</label>
+          <input id="calc-discount-input" name="discountAmount" type="number" min="0" step="0.01" value="0.00" style="width:110px;height:28px;text-align:right;font-size:12px">
         </div>
         <div class="line-sum total-line">
           <span>Total:</span>
@@ -1302,17 +1618,25 @@ function showInvoiceCreator(defaultItemDesc='', defaultRate=''){
         };
       });
 
+      const rawDiscount = d.get('discountAmount')?.trim();
+      const discountPaisa = (!rawDiscount || Number(rawDiscount)===0) ? 0 : toPaisa(rawDiscount);
+      if(discountPaisa > totalPaisa) throw new Error('Discount cannot exceed subtotal amount.');
+      const netTotalPaisa = Math.max(0, totalPaisa - discountPaisa);
+
       const rawPaid = d.get('paidAmount')?.trim();
       const paidPaisa = (!rawPaid || Number(rawPaid)===0) ? 0 : toPaisa(rawPaid);
+      if(paidPaisa > netTotalPaisa) throw new Error('Amount paid cannot exceed net invoice total.');
 
-      if(paidPaisa > totalPaisa) throw new Error('Amount paid cannot exceed invoice total.');
-
+      const pickedClientId = $('#quick-client-picker')?.value || '';
       const invoiceData = {
         number: d.get('number').trim() || ('MS-' + uid().slice(0, 8).toUpperCase()),
+        clientId: pickedClientId,
         client: d.get('client').trim(),
         email: d.get('email').trim(),
         title: descs[0] + (descs.length>1 ? ` (+${descs.length-1} more)` : ''),
-        amountPaisa: totalPaisa,
+        subtotalPaisa: totalPaisa,
+        discountPaisa: discountPaisa,
+        amountPaisa: netTotalPaisa,
         paidPaisa: paidPaisa,
         issued: d.get('issued'),
         due: d.get('due'),
@@ -1348,17 +1672,66 @@ function showInvoiceCreator(defaultItemDesc='', defaultRate=''){
       if(amtEl) amtEl.textContent = 'PKR ' + new Intl.NumberFormat('en-PK',{minimumFractionDigits:2,maximumFractionDigits:2}).format(amt);
     });
 
-    const paidVal = Number($('#calc-paid-input')?.value)||0;
-    const dueVal = Math.max(0, subtotal - paidVal);
+    const rawDiscount = Number($('#calc-discount-input')?.value)||0;
+    const discountVal = Math.max(0, Math.min(rawDiscount, subtotal));
+    const netTotal = Math.max(0, subtotal - discountVal);
+    const rawPaid = Number($('#calc-paid-input')?.value)||0;
+    const paidVal = Math.min(rawPaid, netTotal);
+    const dueVal = Math.max(0, netTotal - paidVal);
 
     if($('#calc-subtotal')) $('#calc-subtotal').textContent = 'PKR ' + new Intl.NumberFormat('en-PK',{minimumFractionDigits:2,maximumFractionDigits:2}).format(subtotal);
-    if($('#calc-total')) $('#calc-total').textContent = 'PKR ' + new Intl.NumberFormat('en-PK',{minimumFractionDigits:2,maximumFractionDigits:2}).format(subtotal);
+    if($('#calc-total')) $('#calc-total').textContent = 'PKR ' + new Intl.NumberFormat('en-PK',{minimumFractionDigits:2,maximumFractionDigits:2}).format(netTotal);
     if($('#calc-balance-due')) $('#calc-balance-due').textContent = 'PKR ' + new Intl.NumberFormat('en-PK',{minimumFractionDigits:2,maximumFractionDigits:2}).format(dueVal);
   };
 
   $('#modal-root').addEventListener('input', ev => {
-    if(ev.target.matches('.item-qty, .item-rate, #calc-paid-input')) recalc();
+    if(ev.target.matches('.item-qty, .item-rate, #calc-paid-input, #calc-discount-input')) recalc();
   });
+
+  /* Auto 15 Days Due Date on Issue Date Change */
+  const issuedInput = $('#modal-root input[name="issued"]');
+  const dueInput = $('#modal-root input[name="due"]');
+  issuedInput?.addEventListener('change', ev => {
+    const val = ev.target.value;
+    if(val && /^\d{4}-\d{2}-\d{2}$/.test(val) && dueInput){
+      dueInput.value = addDays(val, 15);
+    }
+  });
+
+  /* Client Profile Picker Binding */
+  $('#quick-client-picker')?.addEventListener('change', ev => {
+    const cid = ev.target.value;
+    if(!cid) return;
+    const cl = (state.clients||[]).find(c=>c.id===cid);
+    if(cl){
+      const nameInp = $('#modal-root input[name="client"]');
+      const emailInp = $('#modal-root input[name="email"]');
+      if(nameInp) nameInp.value = cl.name;
+      if(emailInp) emailInp.value = cl.email || '';
+      if(cl.paymentTerms){
+        const termsInp = $('#modal-root input[name="paymentTerms"]');
+        if(termsInp) termsInp.value = cl.paymentTerms;
+      }
+      if(cl.type==='monthly' && cl.serviceName){
+        const firstDesc = $('#modal-root .line-item-row .item-desc');
+        const firstRate = $('#modal-root .line-item-row .item-rate');
+        const discInp = $('#calc-discount-input');
+        if(firstDesc) firstDesc.value = cl.serviceName + ' · Monthly Retainer';
+        if(firstRate) firstRate.value = (cl.monthlyRatePaisa/100).toFixed(2);
+        if(discInp && cl.monthlyDiscountPaisa) discInp.value = (cl.monthlyDiscountPaisa/100).toFixed(2);
+        recalc();
+      }
+    }
+  });
+
+  /* If a defaultClientId was passed, trigger client selection */
+  if(defaultClientId){
+    const picker = $('#quick-client-picker');
+    if(picker){
+      picker.value = defaultClientId;
+      picker.dispatchEvent(new Event('change'));
+    }
+  }
 
   $('#btn-add-line-item')?.addEventListener('click', ()=>{
     const tr = document.createElement('tr');
@@ -1413,9 +1786,12 @@ function showInvoiceCreator(defaultItemDesc='', defaultRate=''){
 function officialInvoiceMarkup(i){
   const bank = i.bankInfo || state.company.bankInfo || DEFAULT_BANK_INFO;
   const items = i.items && i.items.length ? i.items : [
-    { description: i.title, quantity: 1, ratePaisa: i.amountPaisa, amountPaisa: i.amountPaisa }
+    { description: i.title, quantity: 1, ratePaisa: i.amountPaisa + (i.discountPaisa||0), amountPaisa: i.amountPaisa + (i.discountPaisa||0) }
   ];
+  const subtotalPaisa = i.subtotalPaisa || (i.amountPaisa + (i.discountPaisa || 0));
+  const discountPaisa = i.discountPaisa || 0;
   const balanceDue = Math.max(0, i.amountPaisa - i.paidPaisa);
+  const noteText = formatInvoiceNote(bank.note, i.number);
 
   return `<div class="invoice-sheet-wrap">
     <div class="inv-top-row">
@@ -1436,7 +1812,7 @@ function officialInvoiceMarkup(i){
           </tr>
           <tr>
             <td>Payment Terms:</td>
-            <td><strong>${e(i.paymentTerms||'1872')}</strong></td>
+            <td><strong>${e(i.paymentTerms||'Net 15')}</strong></td>
           </tr>
           <tr>
             <td>Due Date:</td>
@@ -1480,8 +1856,18 @@ function officialInvoiceMarkup(i){
 
     <div class="inv-summary-block">
       <div class="inv-summary-row">
+        <span>Subtotal:</span>
+        <strong>PKR ${money(subtotalPaisa)}</strong>
+      </div>
+      ${discountPaisa > 0 ? `
+        <div class="inv-summary-row discount-row" style="color:#e11d48">
+          <span>Discount:</span>
+          <strong>- PKR ${money(discountPaisa)}</strong>
+        </div>
+      ` : ''}
+      <div class="inv-summary-row total-row" style="border-top:1px solid #e5e7eb;padding-top:6px">
         <span>Total:</span>
-        <strong>PKR ${money(i.amountPaisa)}</strong>
+        <strong style="font-size:15px;color:#111">PKR ${money(i.amountPaisa)}</strong>
       </div>
       <div class="inv-summary-row">
         <span>Amount Paid:</span>
@@ -1499,7 +1885,7 @@ function officialInvoiceMarkup(i){
     </div>
 
     <div class="inv-notes-block">
-      <strong>Note:</strong> ${e(bank.note||'Please share a screenshot of the transaction or mention the Invoice Number in the payment reference for quick verification.')}
+      <strong>Note:</strong> ${e(noteText)}
     </div>
 
     <div class="inv-terms-block">
@@ -1513,11 +1899,15 @@ function viewInvoice(id){
   if(!i) return;
   modal(`Invoice #${i.number}`, i.client, `
     ${officialInvoiceMarkup(i)}
-    <div class="modal-actions" style="justify-content:space-between">
-      <span class="badge ${invoiceStatus(i)}">${invoiceStatus(i)}</span>
+    <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="badge ${invoiceStatus(i)}">${invoiceStatus(i)}</span>
+        ${i.isMonthlyRecurring?`<span class="pill" style="font-size:11px;background:var(--purple-subtle);color:var(--purple);border:1px solid var(--purple-border)">Monthly Retainer</span>`:''}
+      </div>
       <div style="display:flex;gap:10px">
-        <button class="btn" data-action="print-invoice" data-id="${i.id}">${icon('print')}Print / Save PDF</button>
-        ${i.paidPaisa<i.amountPaisa&&canWrite()?`<button class="btn primary" data-action="pay-invoice" data-id="${i.id}">Record payment</button>`:''}
+        <button class="btn" data-action="download-invoice" data-id="${i.id}">${icon('export')}Download HTML / PDF-Ready</button>
+        <button class="btn primary" data-action="print-invoice" data-id="${i.id}">${icon('print')}Print / Save PDF</button>
+        ${i.paidPaisa<i.amountPaisa&&canWrite()?`<button class="btn" style="background:var(--emerald);color:#fff" data-action="pay-invoice" data-id="${i.id}">Record payment</button>`:''}
       </div>
     </div>
   `, { wide: true });
@@ -1534,6 +1924,7 @@ function printInvoice(id){
   w.opener=null;
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Invoice_${e(i.number)}_${e(i.client)}</title>
   <style>
+    @page{size:A4;margin:12mm 15mm}
     body{font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;margin:40px auto;max-width:820px;padding:20px;color:#111;background:#fff}
     .invoice-sheet-wrap{padding:0}
     .inv-top-row{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px}
@@ -1555,15 +1946,60 @@ function printInvoice(id){
     .inv-items-table td{padding:12px;border-bottom:1px solid #e5e7eb;font-size:13px}
     .inv-summary-block{margin-left:auto;width:300px;margin-bottom:28px}
     .inv-summary-row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px}
+    .inv-summary-row.discount-row strong{color:#e11d48}
     .inv-bank-box{background:#fafafa;border:1px dashed #ccc;border-radius:6px;padding:14px 18px;margin-bottom:20px;font-size:12px;line-height:1.6}
     .inv-notes-block,.inv-terms-block{font-size:11px;color:#555;line-height:1.6;margin-bottom:10px}
-    @media print{body{margin:0;padding:20px}.no-print{display:none}}
+    @media print{body{margin:0;padding:0}.no-print{display:none}}
   </style></head><body>
     ${officialInvoiceMarkup(i)}
   </body></html>`);
   w.document.close();
   w.focus();
   setTimeout(()=>w.print(),250);
+}
+
+function downloadInvoice(id){
+  const i=state.invoices.find(i=>i.id===id);
+  if(!i) return;
+  const markup = `<!doctype html><html><head><meta charset="utf-8"><title>Invoice_${e(i.number)}_${e(i.client)}</title>
+  <style>
+    @page{size:A4;margin:12mm 15mm}
+    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;margin:40px auto;max-width:820px;padding:20px;color:#111;background:#fff}
+    .invoice-sheet-wrap{padding:0}
+    .inv-top-row{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px}
+    .inv-brand-box img{height:54px;display:block}
+    .inv-brand-tagline{font-size:10px;color:#666;font-style:italic}
+    .inv-brand-company{font-size:15px;font-weight:700;margin-top:12px}
+    .inv-meta-right{text-align:right}
+    .inv-meta-right h1{font-size:32px;margin:0 0 4px;font-weight:900}
+    .inv-number-label{font-size:16px;color:#555;margin-bottom:12px;font-weight:600}
+    .inv-meta-table{font-size:12px;margin-bottom:10px;margin-left:auto}
+    .inv-meta-table td{padding:2px 6px;text-align:right}
+    .inv-meta-table td:first-child{color:#666}
+    .inv-balance-banner{background:#f1f3f5;border-radius:6px;padding:8px 14px;font-size:14px;font-weight:700;margin-top:6px;display:inline-block}
+    .inv-bill-to{margin-bottom:24px}
+    .inv-bill-to small{display:block;font-size:11px;color:#666}
+    .inv-bill-to strong{font-size:15px}
+    .inv-items-table{width:100%;border-collapse:collapse;margin-bottom:24px}
+    .inv-items-table th{background:#23272e;color:#fff;font-size:11px;font-weight:700;padding:10px 12px;text-transform:uppercase}
+    .inv-items-table td{padding:12px;border-bottom:1px solid #e5e7eb;font-size:13px}
+    .inv-summary-block{margin-left:auto;width:300px;margin-bottom:28px}
+    .inv-summary-row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px}
+    .inv-summary-row.discount-row strong{color:#e11d48}
+    .inv-bank-box{background:#fafafa;border:1px dashed #ccc;border-radius:6px;padding:14px 18px;margin-bottom:20px;font-size:12px;line-height:1.6}
+    .inv-notes-block,.inv-terms-block{font-size:11px;color:#555;line-height:1.6;margin-bottom:10px}
+    @media print{body{margin:0;padding:0}.no-print{display:none}}
+  </style></head><body>
+    ${officialInvoiceMarkup(i)}
+  </body></html>`;
+  const blob = new Blob([markup], { type: 'text/html;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `Invoice_${e(i.number)}_${e(i.client).replace(/\s+/g,'_')}.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast('Invoice downloaded (HTML / PDF-ready). You can print or save to PDF directly.');
 }
 
 /* ==========================================================================
@@ -1992,6 +2428,37 @@ document.addEventListener('click',async ev=>{
         serviceFilter=button.dataset.category;
         render();
         break;
+      case 'add-client':
+        showAddClient();
+        break;
+      case 'edit-client':
+        showAddClient(id);
+        break;
+      case 'delete-client':
+        await store.deleteClient(id);
+        toast('Client removed.');
+        render();
+        break;
+      case 'filter-clients':
+        clientFilter=button.dataset.filter||'all';
+        render();
+        break;
+      case 'create-client-invoice':
+        showInvoiceCreator('', '', id);
+        break;
+      case 'download-invoice':
+        downloadInvoice(id);
+        break;
+      case 'run-monthly-invoicing':{
+        const gen=await store.runMonthlyInvoicing();
+        if(gen&&gen.length){
+          toast(`✨ AI Engine: Automatically generated ${gen.length} monthly recurring invoice(s)!`);
+          render();
+        }else{
+          toast('All active monthly retainer invoices are up to date for this month.');
+        }
+        break;
+      }
       case 'pay-invoice':
         showPayment(id);
         break;
@@ -2211,6 +2678,19 @@ window.addEventListener('offline',()=>{
 });
 
 bindStore(store);
+
+async function checkMonthlyInvoicing(){
+  if(isAuthenticated()){
+    try{
+      const generated=await store.runMonthlyInvoicing();
+      if(generated&&generated.length){
+        toast(`✨ AI Engine: Automatically generated ${generated.length} monthly recurring invoice(s)!`);
+        render();
+      }
+    }catch{}
+  }
+}
+setTimeout(checkMonthlyInvoicing,1200);
 
 const savedConnection=getSavedConfig();
 if(savedConnection?.config&&savedConnection.workspaceId){

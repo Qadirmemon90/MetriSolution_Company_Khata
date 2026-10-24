@@ -1,5 +1,5 @@
 import {emptyState} from './data.js';
-import {uid,validateTransaction,validateInvoice} from './domain.js';
+import {uid,validateTransaction,validateInvoice,validateClient,addDays} from './domain.js';
 const SDK='13.0.0'; // Version documented by Firebase web setup on 2026-10-16.
 let modulesPromise;
 async function sdk(){return modulesPromise??=Promise.all([import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-app.js`),import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-auth.js`),import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-firestore.js`)]).then(([app,auth,db])=>({...app,...auth,...db}));}
@@ -33,10 +33,10 @@ class FirebaseStore {
   async start(){
     const f=this.f;
     const initial=[new Promise((resolve,reject)=>{let first=true;this.unsubs.push(f.onSnapshot(f.doc(this.db,'companies',this.id),snap=>{this.state.company={...snap.data()};this.notify();if(first){first=false;resolve();}},e=>{if(first)reject(e);else this.onError?.(e);}));})];
-    for(const collection of ['accounts','transactions','reversals','invoices','employees','audit','services']){
+    for(const collection of ['accounts','transactions','reversals','invoices','employees','audit','services','clients']){
       initial.push(new Promise((resolve,reject)=>{let first=true;this.unsubs.push(f.onSnapshot(f.collection(this.db,'companies',this.id,collection),snap=>{
         const mapped = snap.docs.map(d=>{const data=d.data();return {...data,id:d.id,...(data.createdAt?.toDate?{createdAt:data.createdAt.toDate().toISOString()}:{})};});
-        if(collection!=='services'||mapped.length>0){this.state[collection]=mapped;}
+        if((collection!=='services'&&collection!=='clients')||mapped.length>0){this.state[collection]=mapped;}
         if(collection==='audit')this.state.audit.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
         this.notify();if(first){first=false;resolve();}},e=>{if(first)reject(e);else this.onError?.(e);}));}));
     }
@@ -91,6 +91,72 @@ class FirebaseStore {
   async addService(s){
     if(!s?.name?.trim()) throw new Error('Service name required.');
     return this.commit('services', s, 'Service added', s.name);
+  }
+  async addClient(c){
+    validateClient(c);
+    return this.commit('clients', {...c, status: c.status || 'active'}, 'Client added', `${c.name} · ${c.type}`);
+  }
+  async updateClient(id, patch){
+    this.requireWrite();
+    const batch = this.f.writeBatch(this.db);
+    batch.update(this.ref('clients', id), patch);
+    this.audit(batch, id, 'Client updated', id);
+    return batch.commit();
+  }
+  async deleteClient(id){
+    this.requireWrite();
+    const batch = this.f.writeBatch(this.db);
+    batch.delete(this.ref('clients', id));
+    this.audit(batch, id, 'Client removed', id);
+    return batch.commit();
+  }
+  async runMonthlyInvoicing(targetMonth = null){
+    this.requireWrite();
+    const currentMonth = targetMonth || new Date().toISOString().slice(0, 7);
+    const monthDate = `${currentMonth}-01`;
+    const dueDate = addDays(monthDate, 15);
+    const monthName = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date(monthDate + 'T12:00:00Z'));
+    const retainers = (this.state.clients || []).filter(c => c.type === 'monthly' && c.status === 'active' && c.autoInvoice !== false);
+    const generated = [];
+    for (const client of retainers) {
+      const alreadyInvoiced = (this.state.invoices || []).some(i => 
+        (i.clientId === client.id || (i.client && i.client.trim().toLowerCase() === client.name.trim().toLowerCase())) &&
+        i.issued && i.issued.startsWith(currentMonth)
+      );
+      if (!alreadyInvoiced) {
+        const invId = uid();
+        const invNum = '0' + ((this.state.invoices || []).length + 231);
+        const rate = client.monthlyRatePaisa || 2500000;
+        const discount = client.monthlyDiscountPaisa || 0;
+        const total = Math.max(0, rate - discount);
+        const serviceTitle = client.serviceName || 'Monthly Retainer Service';
+        const itemDesc = `${serviceTitle} · Monthly Retainer (${monthName})`;
+
+        const inv = {
+          id: invId,
+          number: invNum,
+          clientId: client.id,
+          client: client.name,
+          email: client.email || '',
+          title: `Monthly Retainer: ${serviceTitle} (${monthName})`,
+          subtotalPaisa: rate,
+          discountPaisa: discount,
+          amountPaisa: total,
+          paidPaisa: 0,
+          issued: monthDate,
+          due: dueDate,
+          paymentTerms: client.paymentTerms || 'Net 15',
+          isMonthlyRecurring: true,
+          revision: 0,
+          items: [{ description: itemDesc, quantity: 1, ratePaisa: rate, amountPaisa: rate }],
+          bankInfo: { ...(this.state.company.bankInfo || {}) }
+        };
+        await this.commit('invoices', inv, 'AI Monthly Invoicing', `${invNum} · ${client.name}`);
+        await this.updateClient(client.id, { lastInvoicedMonth: currentMonth });
+        generated.push(inv);
+      }
+    }
+    return generated;
   }
   async payInvoice(id,payment){
     this.requireWrite();const f=this.f,txId=uid(),invoiceRef=this.ref('invoices',id);

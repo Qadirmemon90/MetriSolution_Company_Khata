@@ -5,6 +5,11 @@ export const CATEGORIES = {
   funding: ['Owner contribution'], drawing: ['Owner withdrawal'], transfer: ['Account transfer'], salary: ['Salary payment']
 };
 export const today = () => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Karachi',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+export const addDays = (dateStr, days = 15) => {
+  const d = new Date(dateStr + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
 export const uid = () => crypto.randomUUID();
 
 export const DEFAULT_BANK_INFO = {
@@ -15,6 +20,18 @@ export const DEFAULT_BANK_INFO = {
   note: 'Please share a screenshot of the transaction or mention the Invoice Number (#0230) in the payment reference for quick verification.',
   terms: 'Payment is due within 15 days. A late fee of 1.5% per month will be applied to all overdue balances.'
 };
+
+export function formatInvoiceNote(noteTemplate, invoiceNumber) {
+  const numStr = invoiceNumber ? `#${invoiceNumber}` : '#0230';
+  if (!noteTemplate) return `Please share a screenshot of the transaction or mention the Invoice Number (${numStr}) in the payment reference for quick verification.`;
+  if (/#([A-Za-z0-9_-]+)/.test(noteTemplate)) {
+    return noteTemplate.replace(/#([A-Za-z0-9_-]+)/g, numStr);
+  }
+  if (noteTemplate.includes('Invoice Number')) {
+    return noteTemplate.replace('Invoice Number', `Invoice Number (${numStr})`);
+  }
+  return `${noteTemplate} (${numStr})`;
+}
 
 export function toPaisa(value) {
   const s=String(value).trim();
@@ -70,9 +87,18 @@ export function validateTransaction(t,state) {
 export function validateInvoice(i) {
   if(!i.client?.trim()||i.client.length>120||!i.title?.trim()||i.title.length>180) throw new Error('Add a client and invoice description.');
   if(!Number.isSafeInteger(i.amountPaisa)||i.amountPaisa<=0||i.amountPaisa>100000000000) throw new Error('Enter a valid invoice total.');
+  if(i.discountPaisa !== undefined && (!Number.isSafeInteger(i.discountPaisa) || i.discountPaisa < 0)) throw new Error('Enter a valid discount amount.');
   validateDate(i.issued); validateDate(i.due);
   if(i.due<i.issued) throw new Error('Due date cannot be before issue date.');
   return i;
+}
+export function validateClient(c) {
+  if(!c.name?.trim()||c.name.length>120) throw new Error('Enter a client name (1–120 characters).');
+  if(!['monthly','one-time'].includes(c.type)) throw new Error('Choose engagement type: Monthly Retainer or One-Time Project.');
+  if(c.type==='monthly'){
+    if(!Number.isSafeInteger(c.monthlyRatePaisa)||c.monthlyRatePaisa<=0||c.monthlyRatePaisa>100000000000) throw new Error('Enter a valid monthly fee.');
+  }
+  return c;
 }
 export function invoiceStatus(i,reference=today()) { return i.paidPaisa===i.amountPaisa?'Paid':i.due<reference?'Overdue':i.paidPaisa>0?'Partial':'Unpaid'; }
 export function cashflow(state,period='month',reference=today()) {

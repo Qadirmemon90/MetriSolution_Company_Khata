@@ -1971,6 +1971,17 @@ td.amount.out {
   color: #111111;
 }
 
+.inv-summary-row.discount-row strong {
+  color: #e11d48 !important;
+}
+
+.inv-summary-row.total-row strong {
+  font-size: 15px;
+  color: #111111;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 4px;
+}
+
 .inv-bank-box {
   background: #fafafa;
   border: 1px dashed #d1d5db;

@@ -31,6 +31,7 @@ test('all screens, services, invoice generator and portal authentication lock re
     ['transactions', 'Transactions'],
     ['accounts', 'Company accounts'],
     ['invoices', 'Invoices &amp; receivables'],
+    ['clients', 'Clients &amp; Monthly Retainers'],
     ['services', 'Services &amp; Packages'],
     ['team', 'Team &amp; payroll'],
     ['reports', 'Business reports'],
@@ -57,10 +58,18 @@ test('all screens, services, invoice generator and portal authentication lock re
   assert.ok(servicesHtml.includes('Social Media Marketing'), 'SMM service present');
 
   // Verify Dialogs
-  for (const action of ['add-account', 'add-employee', 'connect', 'audit', 'create-invoice', 'add-service']) {
+  for (const action of ['add-account', 'add-employee', 'connect', 'audit', 'create-invoice', 'add-service', 'add-client']) {
     await docListeners.click({ target: { closest: s => s === '[data-action]' ? { dataset: { action } } : null } });
     assert.ok(nodes.get('#modal-root').innerHTML.includes('role="dialog"'), action);
   }
+
+  // Verify Dynamic Invoice Note and Bank Details (matching user's screenshot)
+  await docListeners.click({ target: { closest: s => s === '[data-action]' ? { dataset: { action: 'view-invoice', id: 'inv-0230' } } : null } });
+  const invoiceModalHtml = nodes.get('#modal-root').innerHTML;
+  assert.ok(invoiceModalHtml.includes('United Bank Limited'), 'Bank name in dynamic invoice');
+  assert.ok(invoiceModalHtml.includes('AbdulQadir'), 'Account title in dynamic invoice');
+  assert.ok(invoiceModalHtml.includes('0891302212516'), 'Account number in dynamic invoice');
+  assert.ok(invoiceModalHtml.includes('Invoice Number (#0230)'), 'Dynamic verification note with #0230');
 
   // Verify Portal Lock (Without login, portal cannot be accessed)
   data.delete('metri.session');
