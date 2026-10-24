@@ -1,11 +1,21 @@
 export const KINDS = ['income', 'expense', 'funding', 'drawing', 'transfer', 'salary'];
 export const CATEGORIES = {
-  income: ['Web development', 'Shopify development', 'Digital marketing', 'Maintenance', 'Other income'],
+  income: ['Web development', 'Shopify development', 'Digital marketing', 'Maintenance', 'AI & Media', 'Other income'],
   expense: ['Software & subscriptions', 'Office & rent', 'Marketing', 'Travel', 'Utilities', 'Equipment', 'Other expense'],
   funding: ['Owner contribution'], drawing: ['Owner withdrawal'], transfer: ['Account transfer'], salary: ['Salary payment']
 };
 export const today = () => new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Karachi',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
 export const uid = () => crypto.randomUUID();
+
+export const DEFAULT_BANK_INFO = {
+  bankName: 'United Bank Limited',
+  accountTitle: 'AbdulQadir',
+  accountNumber: '0891302212516',
+  iban: 'PK98UNIL010900030221251',
+  note: 'Please share a screenshot of the transaction or mention the Invoice Number (#0230) in the payment reference for quick verification.',
+  terms: 'Payment is due within 15 days. A late fee of 1.5% per month will be applied to all overdue balances.'
+};
+
 export function toPaisa(value) {
   const s=String(value).trim();
   if (!/^\d+(\.\d{1,2})?$/.test(s)) throw new Error('Enter a positive amount with at most two decimal places.');
@@ -14,7 +24,7 @@ export function toPaisa(value) {
   if (!Number.isSafeInteger(n) || n<=0 || n>100000000000) throw new Error('Amount must be between PKR 0.01 and 1 billion.');
   return n;
 }
-export const money = (paisa, compact=false) => new Intl.NumberFormat('en-PK',{maximumFractionDigits:compact?1:2,minimumFractionDigits:0,...(compact?{notation:'compact'}:{})}).format(paisa/100);
+export const money = (paisa, compact=false) => new Intl.NumberFormat('en-PK',{maximumFractionDigits:compact?1:2,minimumFractionDigits:0,...(compact?{notation:'compact'}:{})}).format((paisa||0)/100);
 export const fullMoney = paisa => `PKR ${money(paisa)}`;
 export const activeTransactions = state => state.transactions.filter(t=>!state.reversals.some(r=>r.transactionId===t.id));
 export function balances(state) {
