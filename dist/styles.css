@@ -925,7 +925,8 @@ body.theme-dark .topbar {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 9px 16px;
+  height: 38px;
+  padding: 0 16px;
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 650;
@@ -935,6 +936,14 @@ body.theme-dark .topbar {
   box-shadow: var(--shadow-sm);
   transition: all 0.15s ease;
   white-space: nowrap;
+  box-sizing: border-box;
+  line-height: 1;
+}
+
+.btn svg {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
 }
 
 .btn:hover {
@@ -945,13 +954,69 @@ body.theme-dark .topbar {
 .btn.primary {
   background: linear-gradient(135deg, var(--purple), var(--indigo));
   color: #ffffff;
-  border: none;
+  border: 1px solid transparent;
   box-shadow: 0 4px 12px rgba(112, 56, 219, 0.25);
 }
 
 .btn.primary:hover {
   box-shadow: 0 6px 16px rgba(112, 56, 219, 0.4);
   transform: translateY(-1px);
+}
+
+.segmented-filter {
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 4px;
+  gap: 4px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-sm);
+  max-width: 100%;
+  overflow-x: auto;
+  box-sizing: border-box;
+}
+
+.segmented-filter button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+  box-sizing: border-box;
+  line-height: 1;
+}
+
+.segmented-filter button:hover {
+  color: var(--ink);
+  background: var(--surface-alt);
+}
+
+.segmented-filter button.active {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, var(--purple), var(--indigo)) !important;
+  box-shadow: 0 2px 8px rgba(112, 56, 219, 0.35) !important;
+  border-color: transparent !important;
+}
+
+.segmented-filter button svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  flex-shrink: 0;
 }
 
 .btn.danger {

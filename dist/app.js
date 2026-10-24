@@ -706,9 +706,9 @@ function servicesPage(){
   `)}
   ${statusStrip(false)}
 
-  <div class="services-category-tabs">
+  <div class="segmented-filter">
     ${categories.map(c=>`
-      <button class="btn ${serviceFilter===c?'primary':''}" data-action="filter-service" data-category="${e(c)}">
+      <button class="${serviceFilter===c?'active':''}" data-action="filter-service" data-category="${e(c)}">
         ${c==='all'?'All Services ('+services.length+')':c}
       </button>
     `).join('')}
@@ -906,15 +906,15 @@ function clientsPage(){
     </section>
   </div>
 
-  <div class="services-nav" style="margin-bottom:20px">
-    <button class="btn ${clientFilter==='all'?'primary':''}" data-action="filter-clients" data-filter="all">
+  <div class="segmented-filter">
+    <button class="${clientFilter==='all'?'active':''}" data-action="filter-clients" data-filter="all">
       All Clients (${allClients.length})
     </button>
-    <button class="btn ${clientFilter==='monthly'?'primary':''}" data-action="filter-clients" data-filter="monthly">
-      ${icon('repeat')}Monthly Retainers (${monthlyClients.length})
+    <button class="${clientFilter==='monthly'?'active':''}" data-action="filter-clients" data-filter="monthly">
+      ${icon('repeat')} Monthly Retainers (${monthlyClients.length})
     </button>
-    <button class="btn ${clientFilter==='one-time'?'primary':''}" data-action="filter-clients" data-filter="one-time">
-      One-Time Projects (${projectClients.length})
+    <button class="${clientFilter==='one-time'?'active':''}" data-action="filter-clients" data-filter="one-time">
+      ${icon('layers')} One-Time Projects (${projectClients.length})
     </button>
   </div>
 
