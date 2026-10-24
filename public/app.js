@@ -252,7 +252,7 @@ function renderLoginPage(){
         <form id="standalone-login-form">
           <div class="field">
             <label for="page-workspace-id">Workspace ID</label>
-            <input id="page-workspace-id" name="workspaceId" type="text" value="${e(previousAuth.workspaceId||saved?.workspaceId||'metrisolution')}" required pattern="[a-zA-Z0-9_-]{3,100}" maxlength="100" placeholder="e.g. metrisolution">
+            <input id="page-workspace-id" name="workspaceId" type="text" value="${e(previousAuth.workspaceId||saved?.workspaceId||'metrisolution')}" required pattern="[a-zA-Z0-9_\-]{3,100}" maxlength="100" placeholder="e.g. metrisolution">
             <span class="help">Your unique company identifier (3–100 characters).</span>
           </div>
 
@@ -2238,7 +2238,7 @@ function showConnect(tab='login',previous={}){
     </div>
     <form id="connect-form">
       <div class="form-grid">
-        ${field('Workspace ID','workspaceId','text',previous.workspaceId||saved?.workspaceId||'metrisolution','required pattern="[a-zA-Z0-9_-]{3,100}" maxlength="100"')}
+        ${field('Workspace ID','workspaceId','text',previous.workspaceId||saved?.workspaceId||'metrisolution','required pattern="[a-zA-Z0-9_\\-]{3,100}" maxlength="100"')}
         ${tab==='create'?field('Company name','companyName','text',previous.companyName||'MetriSolution Pvt LTD','required maxlength="100"'):''}
         ${field('Email address','email','email',previous.email||'','required autocomplete="username"')}
         ${field('Password','password','password','',`required autocomplete="${tab==='create'?'new-password':'current-password'}" minlength="${tab==='create'?12:6}"`)}

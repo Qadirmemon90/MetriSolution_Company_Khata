@@ -5,7 +5,7 @@ let modulesPromise;
 async function sdk(){return modulesPromise??=Promise.all([import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-app.js`),import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-auth.js`),import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-firestore.js`)]).then(([app,auth,db])=>({...app,...auth,...db}));}
 export async function connectFirebase(config,{email,password,workspaceId,create=false,companyName='MetriSolution'}){
   if(!config?.apiKey||!config?.projectId||!config?.appId||!config?.authDomain)throw new Error('Add a complete Firebase web configuration.');
-  if(!/^[a-zA-Z0-9_-]{3,100}$/.test(workspaceId))throw new Error('Workspace ID needs 3–100 letters, numbers, hyphens or underscores.');
+  if(!/^[a-zA-Z0-9_\-]{3,100}$/.test(workspaceId))throw new Error('Workspace ID needs 3–100 letters, numbers, hyphens or underscores.');
   const f=await sdk(),app=f.getApps().find(a=>a.name===config.projectId)||f.initializeApp(config,config.projectId),auth=f.getAuth(app),db=f.getFirestore(app);
   await f.setPersistence(auth,f.browserSessionPersistence);
   let credential;
