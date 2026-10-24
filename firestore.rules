@@ -130,20 +130,32 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isPlatformAdmin() {
+      return signedIn() && (
+        request.auth.token.email in ['myaqoobmamen669@gmail.com', 'metrisolution.team@gmail.com'] ||
+        request.auth.uid in ['7JsTFXaNCRWka5ZPuQ4gbRJJ1EX2', 'hGD95IK8lZMK3N1OiP3RFSQcXnf1']
+      );
+    }
+
     function member(c) {
-      return signedIn() && exists(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid));
+      return signedIn() && (
+        isPlatformAdmin() ||
+        exists(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid))
+      );
     }
 
     function role(c) {
-      return get(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid)).data.role;
+      return isPlatformAdmin()
+        ? 'owner'
+        : get(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid)).data.role;
     }
 
     function writer(c) {
-      return member(c) && role(c) in ['owner', 'accountant'];
+      return member(c) && (isPlatformAdmin() || role(c) in ['owner', 'accountant']);
     }
 
     function owner(c) {
-      return member(c) && role(c) == 'owner';
+      return member(c) && (isPlatformAdmin() || role(c) == 'owner');
     }
 
     function text(value, size) {
@@ -207,7 +219,7 @@ service cloud.firestore {
     // Collection Rules
     // ===============================================================
     match /companies/{companyId} {
-      allow get: if signedIn() && (!exists(/databases/$(database)/documents/companies/$(companyId)) || member(companyId));
+      allow get: if signedIn();
       allow list: if false;
 
       allow create: if signedIn()
@@ -218,7 +230,7 @@ service cloud.firestore {
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.createdAt == request.time
         && (!('bankInfo' in request.resource.data) || request.resource.data.bankInfo is map)
-        && getAfter(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid)).data.role == 'owner';
+        && (isPlatformAdmin() || getAfter(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid)).data.role == 'owner');
 
       allow update: if owner(companyId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'bankInfo'])
@@ -233,15 +245,28 @@ service cloud.firestore {
       match /members/{userId} {
         allow read: if signedIn() && (request.auth.uid == userId || member(companyId));
 
-        allow create: if signedIn() && userId == request.auth.uid
-          && !exists(/databases/$(database)/documents/companies/$(companyId))
-          && getAfter(/databases/$(database)/documents/companies/$(companyId)).data.ownerUid == request.auth.uid
-          && request.resource.data.keys().hasOnly(['role', 'email', 'createdAt'])
-          && request.resource.data.role == 'owner'
-          && request.resource.data.email is string
-          && request.resource.data.createdAt == request.time;
+        allow create: if signedIn() && (
+          // Initial owner creation during workspace setup
+          (userId == request.auth.uid
+            && !exists(/databases/$(database)/documents/companies/$(companyId))
+            && getAfter(/databases/$(database)/documents/companies/$(companyId)).data.ownerUid == request.auth.uid
+            && request.resource.data.keys().hasOnly(['role', 'email', 'createdAt'])
+            && request.resource.data.role == 'owner'
+            && request.resource.data.email is string
+            && request.resource.data.createdAt == request.time)
+          // Or existing owner / platform admin inviting/provisioning a member
+          || (owner(companyId)
+            && request.resource.data.keys().hasOnly(['role', 'email', 'createdAt'])
+            && request.resource.data.role in ['owner', 'accountant', 'viewer']
+            && request.resource.data.email is string
+            && request.resource.data.createdAt == request.time)
+        );
 
-        allow update, delete: if false;
+        allow update: if owner(companyId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+          && request.resource.data.role in ['owner', 'accountant', 'viewer'];
+
+        allow delete: if owner(companyId) && request.auth.uid != userId;
       }
 
       // -------------------------------------------------------------
