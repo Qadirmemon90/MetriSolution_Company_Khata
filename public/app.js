@@ -25,6 +25,8 @@ const paths={
   down:'<path d="m6 9 6 6 6-6"/>',
   plus:'<path d="M12 5v14M5 12h14"/>',
   export:'<path d="M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5"/>',
+  download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
+  code:'<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
   arrowup:'<path d="m7 17 10-10M7 7h10v10"/>',
   arrowdown:'<path d="M17 7 7 17M7 7v10h10"/>',
   arrow:'<path d="M4 12h16m-5-5 5 5-5 5"/>',
@@ -1904,28 +1906,21 @@ function viewInvoice(id){
         <span class="badge ${invoiceStatus(i)}">${invoiceStatus(i)}</span>
         ${i.isMonthlyRecurring?`<span class="pill" style="font-size:11px;background:var(--purple-subtle);color:var(--purple);border:1px solid var(--purple-border)">Monthly Retainer</span>`:''}
       </div>
-      <div style="display:flex;gap:10px">
-        <button class="btn" data-action="download-invoice" data-id="${i.id}">${icon('export')}Download HTML / PDF-Ready</button>
-        <button class="btn primary" data-action="print-invoice" data-id="${i.id}">${icon('print')}Print / Save PDF</button>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn primary" data-action="download-invoice-pdf" data-id="${i.id}">${icon('download')}Download PDF</button>
+        <button class="btn" style="background:var(--purple-soft);color:var(--purple);border:1px solid var(--purple-border)" data-action="print-invoice" data-id="${i.id}">${icon('print')}Print / System PDF</button>
+        <button class="btn" data-action="download-invoice-html" data-id="${i.id}">${icon('code')}HTML</button>
         ${i.paidPaisa<i.amountPaisa&&canWrite()?`<button class="btn" style="background:var(--emerald);color:#fff" data-action="pay-invoice" data-id="${i.id}">Record payment</button>`:''}
       </div>
     </div>
   `, { wide: true });
 }
 
-function printInvoice(id){
-  const i=state.invoices.find(i=>i.id===id);
-  if(!i) return;
-  const w=window.open('','_blank','width=860,height=900');
-  if(!w){
-    toast('Allow popups to print or save the invoice.',true);
-    return;
-  }
-  w.opener=null;
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Invoice_${e(i.number)}_${e(i.client)}</title>
+function getInvoiceFullHtml(i){
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Invoice_${e(i.number)}_${e(i.client)}</title>
   <style>
     @page{size:A4;margin:12mm 15mm}
-    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;margin:40px auto;max-width:820px;padding:20px;color:#111;background:#fff}
+    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;margin:20px auto;max-width:820px;padding:20px;color:#111;background:#fff}
     .invoice-sheet-wrap{padding:0}
     .inv-top-row{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px}
     .inv-brand-box img{height:54px;display:block}
@@ -1949,57 +1944,98 @@ function printInvoice(id){
     .inv-summary-row.discount-row strong{color:#e11d48}
     .inv-bank-box{background:#fafafa;border:1px dashed #ccc;border-radius:6px;padding:14px 18px;margin-bottom:20px;font-size:12px;line-height:1.6}
     .inv-notes-block,.inv-terms-block{font-size:11px;color:#555;line-height:1.6;margin-bottom:10px}
-    @media print{body{margin:0;padding:0}.no-print{display:none}}
+    @media print{body{margin:0;padding:0}.no-print{display:none !important}}
   </style></head><body>
     ${officialInvoiceMarkup(i)}
-  </body></html>`);
-  w.document.close();
-  w.focus();
-  setTimeout(()=>w.print(),250);
+  </body></html>`;
+}
+
+function printInvoice(id){
+  const i=state.invoices.find(i=>i.id===id);
+  if(!i) return;
+
+  let iframe=document.getElementById('inv-print-frame');
+  if(!iframe){
+    iframe=document.createElement('iframe');
+    iframe.id='inv-print-frame';
+    iframe.style.position='fixed';
+    iframe.style.top='-9999px';
+    iframe.style.left='-9999px';
+    iframe.style.width='1px';
+    iframe.style.height='1px';
+    iframe.style.border='0';
+    iframe.style.opacity='0';
+    document.body.appendChild(iframe);
+  }
+
+  const doc=iframe.contentWindow?.document||iframe.contentDocument;
+  if(!doc){
+    window.print();
+    return;
+  }
+
+  doc.open();
+  doc.write(getInvoiceFullHtml(i));
+  doc.close();
+
+  toast('Opening print dialog…');
+  setTimeout(()=>{
+    try{
+      const win=iframe.contentWindow||iframe;
+      win.focus();
+      win.print();
+    }catch(err){
+      console.warn('Iframe print fallback:', err);
+      window.print();
+    }
+  }, 400);
+}
+
+async function downloadInvoicePdf(id){
+  const i=state.invoices.find(i=>i.id===id);
+  if(!i) return;
+  toast('Preparing PDF download…');
+
+  const container=document.createElement('div');
+  container.style.cssText='position:fixed;top:-9999px;left:-9999px;width:760px;background:#fff;padding:24px 30px;color:#111;font-family:system-ui,-apple-system,sans-serif;box-sizing:border-box;';
+  container.innerHTML=officialInvoiceMarkup(i);
+  document.body.appendChild(container);
+
+  if(window.html2pdf){
+    const opt={
+      margin:[8,10,8,10],
+      filename:`Invoice_${e(i.number)}_${e(i.client).replace(/\s+/g,'_')}.pdf`,
+      image:{type:'jpeg',quality:0.98},
+      html2canvas:{scale:2,useCORS:true,logging:false},
+      jsPDF:{unit:'mm',format:'a4',orientation:'portrait'}
+    };
+    try{
+      await window.html2pdf().set(opt).from(container).save();
+      toast('PDF saved successfully!');
+    }catch(err){
+      console.warn('html2pdf generation error:', err);
+      printInvoice(id);
+    }finally{
+      container.remove();
+    }
+  }else{
+    container.remove();
+    printInvoice(id);
+  }
 }
 
 function downloadInvoice(id){
   const i=state.invoices.find(i=>i.id===id);
   if(!i) return;
-  const markup = `<!doctype html><html><head><meta charset="utf-8"><title>Invoice_${e(i.number)}_${e(i.client)}</title>
-  <style>
-    @page{size:A4;margin:12mm 15mm}
-    body{font-family:system-ui,-apple-system,BlinkMacSystemFont,sans-serif;margin:40px auto;max-width:820px;padding:20px;color:#111;background:#fff}
-    .invoice-sheet-wrap{padding:0}
-    .inv-top-row{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px}
-    .inv-brand-box img{height:54px;display:block}
-    .inv-brand-tagline{font-size:10px;color:#666;font-style:italic}
-    .inv-brand-company{font-size:15px;font-weight:700;margin-top:12px}
-    .inv-meta-right{text-align:right}
-    .inv-meta-right h1{font-size:32px;margin:0 0 4px;font-weight:900}
-    .inv-number-label{font-size:16px;color:#555;margin-bottom:12px;font-weight:600}
-    .inv-meta-table{font-size:12px;margin-bottom:10px;margin-left:auto}
-    .inv-meta-table td{padding:2px 6px;text-align:right}
-    .inv-meta-table td:first-child{color:#666}
-    .inv-balance-banner{background:#f1f3f5;border-radius:6px;padding:8px 14px;font-size:14px;font-weight:700;margin-top:6px;display:inline-block}
-    .inv-bill-to{margin-bottom:24px}
-    .inv-bill-to small{display:block;font-size:11px;color:#666}
-    .inv-bill-to strong{font-size:15px}
-    .inv-items-table{width:100%;border-collapse:collapse;margin-bottom:24px}
-    .inv-items-table th{background:#23272e;color:#fff;font-size:11px;font-weight:700;padding:10px 12px;text-transform:uppercase}
-    .inv-items-table td{padding:12px;border-bottom:1px solid #e5e7eb;font-size:13px}
-    .inv-summary-block{margin-left:auto;width:300px;margin-bottom:28px}
-    .inv-summary-row{display:flex;justify-content:space-between;padding:4px 0;font-size:13px}
-    .inv-summary-row.discount-row strong{color:#e11d48}
-    .inv-bank-box{background:#fafafa;border:1px dashed #ccc;border-radius:6px;padding:14px 18px;margin-bottom:20px;font-size:12px;line-height:1.6}
-    .inv-notes-block,.inv-terms-block{font-size:11px;color:#555;line-height:1.6;margin-bottom:10px}
-    @media print{body{margin:0;padding:0}.no-print{display:none}}
-  </style></head><body>
-    ${officialInvoiceMarkup(i)}
-  </body></html>`;
-  const blob = new Blob([markup], { type: 'text/html;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `Invoice_${e(i.number)}_${e(i.client).replace(/\s+/g,'_')}.html`;
+  const markup=getInvoiceFullHtml(i);
+  const blob=new Blob([markup],{type:'text/html;charset=utf-8'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`Invoice_${e(i.number)}_${e(i.client).replace(/\s+/g,'_')}.html`;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  toast('Invoice downloaded (HTML / PDF-ready). You can print or save to PDF directly.');
+  toast('HTML invoice downloaded.');
 }
 
 /* ==========================================================================
@@ -2470,6 +2506,14 @@ document.addEventListener('click',async ev=>{
         break;
       case 'print-invoice':
         printInvoice(id);
+        break;
+      case 'download-pdf':
+      case 'download-invoice-pdf':
+        downloadInvoicePdf(id);
+        break;
+      case 'download-invoice':
+      case 'download-invoice-html':
+        downloadInvoice(id);
         break;
       case 'connect':
         showConnect();

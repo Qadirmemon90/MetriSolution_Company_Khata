@@ -3,6 +3,23 @@ const KEY='metrisolution.khata.demo.v2';
 
 export const DEFAULT_CLIENTS = [
   {
+    id: 'client-fatoyz',
+    name: 'FaToyz',
+    contactPerson: 'FaToyz Team',
+    email: 'fatoyz.team@gmail.com',
+    phone: '+92 300 1234567',
+    city: 'Karachi',
+    type: 'monthly',
+    serviceName: 'Whole Brand Management',
+    monthlyRatePaisa: 6000000,
+    monthlyDiscountPaisa: 0,
+    billingDay: 1,
+    autoInvoice: true,
+    paymentTerms: 'Net 15',
+    status: 'active',
+    lastInvoicedMonth: today().slice(0, 7)
+  },
+  {
     id: 'client-yelo',
     name: 'Yelo Beta',
     contactPerson: 'Hamza Farooq',

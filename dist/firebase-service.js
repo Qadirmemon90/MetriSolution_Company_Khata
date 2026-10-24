@@ -1,4 +1,4 @@
-import {emptyState} from './data.js';
+import {emptyState,DEFAULT_CLIENTS,DEFAULT_SERVICES} from './data.js';
 import {uid,validateTransaction,validateInvoice,validateClient,addDays} from './domain.js';
 const SDK='13.0.0'; // Version documented by Firebase web setup on 2026-10-16.
 let modulesPromise;
@@ -52,7 +52,9 @@ class FirebaseStore {
     for(const collection of ['accounts','transactions','reversals','invoices','employees','audit','services','clients']){
       initial.push(new Promise((resolve,reject)=>{let first=true;this.unsubs.push(f.onSnapshot(f.collection(this.db,'companies',this.id,collection),snap=>{
         const mapped = snap.docs.map(d=>{const data=d.data();return {...data,id:d.id,...(data.createdAt?.toDate?{createdAt:data.createdAt.toDate().toISOString()}:{})};});
-        if((collection!=='services'&&collection!=='clients')||mapped.length>0){this.state[collection]=mapped;}
+        if(mapped.length>0){this.state[collection]=mapped;}
+        else if(collection==='clients'&&(!this.state.clients||this.state.clients.length===0)){this.state.clients=structuredClone(DEFAULT_CLIENTS);}
+        else if(collection==='services'&&(!this.state.services||this.state.services.length===0)){this.state.services=structuredClone(DEFAULT_SERVICES);}
         if(collection==='audit')this.state.audit.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
         this.notify();if(first){first=false;resolve();}},e=>{if(first)reject(e);else this.onError?.(e);}));}));
     }
