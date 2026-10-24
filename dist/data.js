@@ -346,13 +346,35 @@ export class DemoStore {
   async addInvoice(i) {
     validateInvoice(i);
     const invoiceNum = i.number?.trim() || ('MS-' + uid().slice(0, 8).toUpperCase());
-    return this.mutate('Invoice created', `${invoiceNum} · ${i.client}`, s => s.invoices.push({
-      ...i,
-      id: uid(),
-      number: invoiceNum,
-      paidPaisa: i.paidPaisa || 0,
-      revision: 0
-    }));
+    const invId = uid();
+    const paid = i.paidPaisa || 0;
+    return this.mutate('Invoice created', `${invoiceNum} · ${i.client}`, s => {
+      s.invoices.push({
+        ...i,
+        id: invId,
+        number: invoiceNum,
+        paidPaisa: paid,
+        revision: paid > 0 ? 1 : 0
+      });
+      if (paid > 0) {
+        const accId = s.accounts[0]?.id || 'bank';
+        s.transactions.push({
+          id: uid(),
+          kind: 'income',
+          amountPaisa: paid,
+          date: i.issued || today(),
+          description: `${invoiceNum} · ${i.title} · Advance deposit`.slice(0, 180),
+          category: 'Invoice payment',
+          party: i.client,
+          accountId: accId,
+          toAccountId: '',
+          employeeId: '',
+          invoiceId: invId,
+          createdAt: new Date().toISOString(),
+          createdBy: this.user.uid
+        });
+      }
+    });
   }
 
   async payInvoice(id, payment) {

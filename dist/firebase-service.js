@@ -33,8 +33,12 @@ class FirebaseStore {
   async start(){
     const f=this.f;
     const initial=[new Promise((resolve,reject)=>{let first=true;this.unsubs.push(f.onSnapshot(f.doc(this.db,'companies',this.id),snap=>{this.state.company={...snap.data()};this.notify();if(first){first=false;resolve();}},e=>{if(first)reject(e);else this.onError?.(e);}));})];
-    for(const collection of ['accounts','transactions','reversals','invoices','employees','audit']){
-      initial.push(new Promise((resolve,reject)=>{let first=true;this.unsubs.push(f.onSnapshot(f.collection(this.db,'companies',this.id,collection),snap=>{this.state[collection]=snap.docs.map(d=>{const data=d.data();return {...data,id:d.id,...(data.createdAt?.toDate?{createdAt:data.createdAt.toDate().toISOString()}:{})};});this.state.audit.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));this.notify();if(first){first=false;resolve();}},e=>{if(first)reject(e);else this.onError?.(e);}));}));
+    for(const collection of ['accounts','transactions','reversals','invoices','employees','audit','services']){
+      initial.push(new Promise((resolve,reject)=>{let first=true;this.unsubs.push(f.onSnapshot(f.collection(this.db,'companies',this.id,collection),snap=>{
+        const mapped = snap.docs.map(d=>{const data=d.data();return {...data,id:d.id,...(data.createdAt?.toDate?{createdAt:data.createdAt.toDate().toISOString()}:{})};});
+        if(collection!=='services'||mapped.length>0){this.state[collection]=mapped;}
+        if(collection==='audit')this.state.audit.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+        this.notify();if(first){first=false;resolve();}},e=>{if(first)reject(e);else this.onError?.(e);}));}));
     }
     try{await Promise.all(initial);}catch(e){this.destroy();throw e;}
   }
@@ -45,7 +49,49 @@ class FirebaseStore {
   async addAccount(a){if(!a.name?.trim()||a.name.length>80||!['Bank','Cash','Wallet'].includes(a.type)||!Number.isSafeInteger(a.openingPaisa)||a.openingPaisa<0)throw new Error('Check account details.');return this.commit('accounts',a,'Account created',a.name);}
   async addEmployee(e){if(!e.name?.trim()||e.name.length>120||!e.role?.trim()||e.role.length>120||!Number.isSafeInteger(e.salaryPaisa)||e.salaryPaisa<0)throw new Error('Check team member details.');return this.commit('employees',e,'Team member added',e.name);}
   async addTransaction(t){this.requireWrite();validateTransaction(t,this.state);if(t.invoiceId)throw new Error('Use the invoice payment action.');return this.commit('transactions',t,'Transaction recorded',t.description);}
-  async addInvoice(i){validateInvoice(i);const id=uid();return this.commit('invoices',{...i,number:'MS-'+id.slice(0,8).toUpperCase(),paidPaisa:0,revision:0,lastTxId:'',lastAction:''},'Invoice created',i.client);}
+  async addInvoice(i){
+    validateInvoice(i);
+    const id=uid();
+    const invoiceNum = i.number?.trim() || ('MS-'+id.slice(0,8).toUpperCase());
+    const paid = i.paidPaisa || 0;
+    if (paid > 0) {
+      this.requireWrite();
+      const batch = this.f.writeBatch(this.db);
+      const accId = this.state.accounts[0]?.id || 'bank';
+      const txId = uid();
+      batch.set(this.ref('invoices', id), {
+        ...i,
+        id,
+        number: invoiceNum,
+        paidPaisa: paid,
+        revision: 1,
+        lastTxId: txId,
+        lastAction: 'created',
+        ...this.stamp()
+      });
+      batch.set(this.ref('transactions', txId), {
+        id: txId,
+        kind: 'income',
+        amountPaisa: paid,
+        date: i.issued || new Date().toISOString().slice(0, 10),
+        description: `${invoiceNum} · ${i.title} · Advance deposit`.slice(0, 180),
+        category: 'Invoice payment',
+        party: i.client,
+        accountId: accId,
+        toAccountId: '',
+        employeeId: '',
+        invoiceId: id,
+        ...this.stamp()
+      });
+      this.audit(batch, id, 'Invoice created', `${invoiceNum} · ${i.client}`);
+      return batch.commit();
+    }
+    return this.commit('invoices',{...i,id,number:invoiceNum,paidPaisa:0,revision:0,lastTxId:'',lastAction:''},'Invoice created',`${invoiceNum} · ${i.client}`);
+  }
+  async addService(s){
+    if(!s?.name?.trim()) throw new Error('Service name required.');
+    return this.commit('services', s, 'Service added', s.name);
+  }
   async payInvoice(id,payment){
     this.requireWrite();const f=this.f,txId=uid(),invoiceRef=this.ref('invoices',id);
     await f.runTransaction(this.db,async tr=>{
@@ -68,7 +114,17 @@ class FirebaseStore {
       this.audit(tr,'reverse-'+id,'Transaction reversed',reason);
     });
   }
-  async updateCompany(name){this.requireWrite();if(this.role!=='owner')throw new Error('Only the owner can change company settings.');if(!name?.trim()||name.length>100)throw new Error('Enter a company name of 1–100 characters.');const batch=this.f.writeBatch(this.db),id=uid();batch.update(this.f.doc(this.db,'companies',this.id),{name});this.audit(batch,id,'Company updated',name);await batch.commit();}
+  async updateCompany(name, bankInfo = null){
+    this.requireWrite();
+    if(this.role!=='owner')throw new Error('Only the owner can change company settings.');
+    if(!name?.trim()||name.length>100)throw new Error('Enter a company name of 1–100 characters.');
+    const patch = { name: name.trim() };
+    if (bankInfo) patch.bankInfo = bankInfo;
+    const batch=this.f.writeBatch(this.db),id=uid();
+    batch.update(this.f.doc(this.db,'companies',this.id),patch);
+    this.audit(batch,id,'Company updated',name);
+    await batch.commit();
+  }
   async signOut(){this.destroy();await this.f.signOut(this.auth);}
   destroy(){this.unsubs.forEach(f=>f());this.unsubs=[];this.listeners.clear();}
 }
