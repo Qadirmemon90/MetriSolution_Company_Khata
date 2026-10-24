@@ -2790,6 +2790,31 @@ td.amount.out {
   }
 }
 
+.btn-whatsapp {
+  background: #25d366 !important;
+  color: #ffffff !important;
+  border: 1px solid #20bd5a !important;
+  font-weight: 700 !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 1px 2px rgba(37, 211, 102, 0.2);
+  transition: all 0.15s ease;
+}
+
+.btn-whatsapp:hover {
+  background: #20bd5a !important;
+  color: #ffffff !important;
+  box-shadow: 0 3px 8px rgba(37, 211, 102, 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-whatsapp svg {
+  fill: currentColor;
+  width: 15px;
+  height: 15px;
+}
+
 /* ==========================================================================
    PRINT STYLES FOR INVOICE & REPORTS
    ========================================================================== */
@@ -2798,9 +2823,11 @@ td.amount.out {
     background: #ffffff !important;
     color: #111111 !important;
     font-size: 11px;
+    margin: 0 !important;
+    padding: 0 !important;
   }
   .sidebar, .topbar, .intro-actions, .status-strip, .toolbar, .page-footer,
-  .btn, .link-button, .modal-overlay, #toast-root, .icon-button, .mobile-scrim {
+  .btn, .link-button, #toast-root, .icon-button, .mobile-scrim, .modal-actions, .modal-header {
     display: none !important;
   }
   .layout, .main {
@@ -2809,6 +2836,24 @@ td.amount.out {
   .content {
     padding: 0 !important;
     max-width: none !important;
+  }
+  .modal-overlay {
+    position: static !important;
+    background: none !important;
+    padding: 0 !important;
+    display: block !important;
+  }
+  .modal {
+    box-shadow: none !important;
+    border: none !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: transparent !important;
+  }
+  .modal-body {
+    padding: 0 !important;
+    overflow: visible !important;
   }
   .invoice-sheet-wrap {
     box-shadow: none !important;

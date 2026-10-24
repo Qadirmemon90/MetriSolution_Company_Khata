@@ -84,6 +84,19 @@ export function validateTransaction(t,state) {
   if(t.invoiceId && (!state.invoices.some(i=>i.id===t.invoiceId)||t.kind!=='income')) throw new Error('Invalid invoice receipt.');
   return t;
 }
+export function formatWhatsAppNumber(phone) {
+  if (!phone) return '';
+  let cleaned = String(phone).replace(/[^0-9]/g, '');
+  if (!cleaned) return '';
+  if (cleaned.startsWith('00')) cleaned = cleaned.slice(2);
+  if (cleaned.startsWith('03') && cleaned.length === 11) {
+    cleaned = '92' + cleaned.slice(1);
+  } else if (cleaned.startsWith('3') && cleaned.length === 10) {
+    cleaned = '92' + cleaned;
+  }
+  return cleaned;
+}
+
 export function validateInvoice(i) {
   if(!i.client?.trim()||i.client.length>120||!i.title?.trim()||i.title.length>180) throw new Error('Add a client and invoice description.');
   if(!Number.isSafeInteger(i.amountPaisa)||i.amountPaisa<=0||i.amountPaisa>100000000000) throw new Error('Enter a valid invoice total.');

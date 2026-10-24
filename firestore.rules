@@ -366,7 +366,7 @@ service cloud.firestore {
 
         allow create: if writer(companyId)
           && request.resource.data.keys().hasOnly([
-            'id', 'number', 'client', 'clientId', 'email', 'title',
+            'id', 'number', 'client', 'clientId', 'email', 'phone', 'billingNote', 'title',
             'subtotalPaisa', 'discountPaisa', 'amountPaisa', 'paidPaisa',
             'issued', 'due', 'paymentTerms', 'isMonthlyRecurring',
             'items', 'bankInfo', 'revision', 'lastTxId', 'lastAction',
@@ -380,6 +380,8 @@ service cloud.firestore {
           && request.resource.data.paidPaisa is int
           && request.resource.data.paidPaisa >= 0
           && request.resource.data.paidPaisa <= request.resource.data.amountPaisa
+          && (!('phone' in request.resource.data) || optionalText(request.resource.data.phone, 40))
+          && (!('billingNote' in request.resource.data) || optionalText(request.resource.data.billingNote, 120))
           && (!('subtotalPaisa' in request.resource.data) || (request.resource.data.subtotalPaisa is int && request.resource.data.subtotalPaisa >= 0))
           && (!('discountPaisa' in request.resource.data) || (request.resource.data.discountPaisa is int && request.resource.data.discountPaisa >= 0))
           && (!('clientId' in request.resource.data) || optionalText(request.resource.data.clientId, 50))

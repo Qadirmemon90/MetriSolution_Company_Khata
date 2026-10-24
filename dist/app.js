@@ -1,5 +1,5 @@
 import {DemoStore, DEFAULT_SERVICES, DEFAULT_CLIENTS} from './data.js';
-import {money,fullMoney,toPaisa,today,uid,addDays,formatInvoiceNote,balances,summary,activeTransactions,inPeriod,cashflow,expenseGroups,csv,invoiceStatus,CATEGORIES,DEFAULT_BANK_INFO} from './domain.js';
+import {money,fullMoney,toPaisa,today,uid,addDays,formatInvoiceNote,formatWhatsAppNumber,balances,summary,activeTransactions,inPeriod,cashflow,expenseGroups,csv,invoiceStatus,CATEGORIES,DEFAULT_BANK_INFO} from './domain.js';
 import {firebaseConfig} from './firebase-config.js';
 
 const $=s=>document.querySelector(s), app=$('#app');
@@ -16,6 +16,7 @@ const paths={
   layers:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
   camera:'<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/>',
   code:'<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+  whatsapp:'<path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.05 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>',
   palette:'<circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>',
   tool:'<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
   megaphone:'<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
@@ -26,7 +27,6 @@ const paths={
   plus:'<path d="M12 5v14M5 12h14"/>',
   export:'<path d="M12 3v12m-4-4 4 4 4-4M5 16v5h14v-5"/>',
   download:'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>',
-  code:'<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
   arrowup:'<path d="m7 17 10-10M7 7h10v10"/>',
   arrowdown:'<path d="M17 7 7 17M7 7v10h10"/>',
   arrow:'<path d="M4 12h16m-5-5 5 5-5 5"/>',
@@ -755,6 +755,42 @@ function servicesPage(){
 /* ==========================================================================
    INVOICES & RECEIVABLES PAGE
    ========================================================================== */
+function getInvoiceWhatsAppUrl(i){
+  let clientPhone = i.phone || '';
+  if(!clientPhone && i.clientId){
+    const cl = (state.clients||[]).find(c=>c.id===i.clientId);
+    if(cl && cl.phone) clientPhone = cl.phone;
+  }
+  if(!clientPhone && i.client){
+    const cl = (state.clients||[]).find(c=>c.name && c.name.trim().toLowerCase()===i.client.trim().toLowerCase());
+    if(cl && cl.phone) clientPhone = cl.phone;
+  }
+  const cleanPhone = formatWhatsAppNumber(clientPhone);
+  const companyName = state.company?.name || 'MetriSolution';
+  const balancePaisa = Math.max(0, i.amountPaisa - (i.paidPaisa||0));
+  const bank = i.bankInfo || state.company.bankInfo || DEFAULT_BANK_INFO;
+
+  const msg = `*INVOICE: ${i.number}*\n` +
+    `Hello *${i.client}*,\n\n` +
+    `Here is your invoice summary from *${companyName}*:\n\n` +
+    `📄 *Invoice #:* ${i.number}\n` +
+    `📅 *Issue Date:* ${dateLabel(i.issued)}\n` +
+    `⏰ *Due Date:* ${dateLabel(i.due)}\n` +
+    `💰 *Total Amount:* PKR ${money(i.amountPaisa)}\n` +
+    (balancePaisa > 0 ? `⚠️ *Balance Due:* PKR ${money(balancePaisa)}\n` : `✅ *Status:* Fully Paid\n`) +
+    `\n🏦 *Bank Transfer Details:*\n` +
+    `Bank Name: *${bank.bankName || 'United Bank Limited'}*\n` +
+    `Account Title: *${bank.accountTitle || 'AbdulQadir'}*\n` +
+    `Account #: *${bank.accountNumber || '0891302212516'}*\n` +
+    `IBAN: *${bank.iban || 'PK98UNIL010900030221251'}*\n\n` +
+    `_Please share payment confirmation / screenshot after transfer for quick verification._\n` +
+    `Thank you!`;
+
+  return cleanPhone
+    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`
+    : `https://wa.me/?text=${encodeURIComponent(msg)}`;
+}
+
 function invoicesPage(){
   const invoiced=state.invoices.reduce((a,i)=>a+i.amountPaisa,0);
   const received=state.invoices.reduce((a,i)=>a+i.paidPaisa,0);
@@ -814,10 +850,13 @@ function invoicesPage(){
               <td class="amount ${i.paidPaisa<i.amountPaisa?'out':''}">${money(i.amountPaisa-i.paidPaisa)}</td>
               <td><span class="badge ${invoiceStatus(i)}">${invoiceStatus(i)}</span></td>
               <td>
-                <div style="display:flex;gap:12px;align-items:center">
+                <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
                   <button class="link-button" data-action="view-invoice" data-id="${i.id}">
                     ${icon('print')} View / PDF
                   </button>
+                  <a href="${getInvoiceWhatsAppUrl(i)}" target="_blank" rel="noopener" class="link-button" style="color:#16a34a;display:inline-flex;align-items:center;gap:4px;font-weight:600" title="Send invoice breakdown via WhatsApp">
+                    ${icon('whatsapp')} WhatsApp
+                  </a>
                   ${i.paidPaisa<i.amountPaisa&&canWrite()?`
                     <button class="link-button" data-action="pay-invoice" data-id="${i.id}">
                       Record payment ${icon('arrow')}
@@ -907,17 +946,22 @@ function clientsPage(){
           <tbody>
             ${displayedClients.map(c => {
               const clientInvoices = (state.invoices||[]).filter(i => i.clientId === c.id || (i.client && i.client.trim().toLowerCase() === c.name.trim().toLowerCase()));
-              const cleanPhone = (c.phone||'').replace(/[^0-9]/g,'');
+              const cleanPhone = formatWhatsAppNumber(c.phone);
               return `<tr>
                 <td>
                   <strong style="font-size:14px;color:var(--ink)">${e(c.name)}</strong>
                   <div class="muted small">${e(c.city || 'Pakistan')} · ${clientInvoices.length} invoices</div>
                 </td>
                 <td>
-                  <div>${e(c.contactPerson || 'Account Manager')}</div>
-                  <div style="display:flex;gap:6px;align-items:center;margin-top:2px">
+                  <div><strong style="color:var(--ink)">${e(c.contactPerson || 'Direct Contact')}</strong></div>
+                  ${c.phone ? `<div style="font-size:12px;color:var(--ink);font-weight:600;margin-top:2px">${e(c.phone)}</div>` : ''}
+                  <div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
                     ${c.email ? `<span class="muted small">${e(c.email)}</span>` : ''}
-                    ${cleanPhone ? `<a href="https://wa.me/${cleanPhone}" target="_blank" rel="noopener" class="pill" style="font-size:10px;text-decoration:none;background:#25d36615;color:#16a34a;border:1px solid #25d36640">WhatsApp</a>` : ''}
+                    ${cleanPhone ? `
+                      <a href="https://wa.me/${cleanPhone}?text=Hello%20${encodeURIComponent(c.name)}" target="_blank" rel="noopener" class="pill" style="font-size:11px;text-decoration:none;background:#25d36620;color:#16a34a;border:1px solid #25d36660;display:inline-flex;align-items:center;gap:4px;font-weight:600">
+                        ${icon('whatsapp')} Chat
+                      </a>
+                    ` : `<span class="muted small" style="color:var(--muted)">No WhatsApp</span>`}
                   </div>
                 </td>
                 <td>
@@ -1510,13 +1554,15 @@ function showInvoiceCreator(defaultItemDesc='', defaultRate='', defaultClientId=
     <div class="form-grid">
       ${field('Invoice #','number','text',nextNum,'required')}
       ${field('Issue Date','issued','date',today(),'required')}
-      ${field('Payment Terms','paymentTerms','text','Net 15','placeholder="e.g. Net 15 or 1872"')}
       ${field('Due Date (Auto 15 Days)','due','date',defaultDueDate,'required')}
+      ${field('Payment Terms','paymentTerms','text','Net 15','placeholder="e.g. Net 15 or 1872"')}
     </div>
 
     <div class="form-grid" style="margin-top:10px">
-      ${field('Bill To (Client / Company)','client','text','','required maxlength="120" placeholder="e.g. Yelo Beta"')}
+      ${field('Bill To (Client / Company)','client','text','','required maxlength="120" placeholder="e.g. FaToyz or Yelo Beta"')}
       ${field('Client Email','email','email','','placeholder="client@company.com"')}
+      ${field('Client Phone / WhatsApp','phone','text','','placeholder="+92 300 1234567 or 03001234567"')}
+      ${field('Billing Model / Service','billingNote','text','','placeholder="e.g. Monthly Retainer"')}
     </div>
 
     <div style="display:flex;justify-content:space-between;align-items:center;margin:18px 0 8px">
@@ -1635,6 +1681,8 @@ function showInvoiceCreator(defaultItemDesc='', defaultRate='', defaultClientId=
         clientId: pickedClientId,
         client: d.get('client').trim(),
         email: d.get('email').trim(),
+        phone: d.get('phone')?.trim() || '',
+        billingNote: d.get('billingNote')?.trim() || '',
         title: descs[0] + (descs.length>1 ? ` (+${descs.length-1} more)` : ''),
         subtotalPaisa: totalPaisa,
         discountPaisa: discountPaisa,
@@ -1708,8 +1756,12 @@ function showInvoiceCreator(defaultItemDesc='', defaultRate='', defaultClientId=
     if(cl){
       const nameInp = $('#modal-root input[name="client"]');
       const emailInp = $('#modal-root input[name="email"]');
+      const phoneInp = $('#modal-root input[name="phone"]');
+      const noteInp = $('#modal-root input[name="billingNote"]');
       if(nameInp) nameInp.value = cl.name;
       if(emailInp) emailInp.value = cl.email || '';
+      if(phoneInp) phoneInp.value = cl.phone || '';
+      if(noteInp) noteInp.value = cl.serviceName || (cl.type==='monthly'?'Monthly Retainer':'One-Time Project');
       if(cl.paymentTerms){
         const termsInp = $('#modal-root input[name="paymentTerms"]');
         if(termsInp) termsInp.value = cl.paymentTerms;
@@ -1833,6 +1885,7 @@ function officialInvoiceMarkup(i){
       <small>Bill To:</small>
       <strong>${e(i.client)}</strong>
       ${i.email?`<div class="muted small">${e(i.email)}</div>`:''}
+      ${i.phone?`<div class="muted small" style="color:#555">Phone: ${e(i.phone)}</div>`:''}
     </div>
 
     <table class="inv-items-table">
@@ -1909,6 +1962,7 @@ function viewInvoice(id){
       <div style="display:flex;gap:10px;flex-wrap:wrap">
         <button class="btn primary" data-action="download-invoice-pdf" data-id="${i.id}">${icon('download')}Download PDF</button>
         <button class="btn" style="background:var(--purple-soft);color:var(--purple);border:1px solid var(--purple-border)" data-action="print-invoice" data-id="${i.id}">${icon('print')}Print / System PDF</button>
+        <a href="${getInvoiceWhatsAppUrl(i)}" target="_blank" rel="noopener" class="btn btn-whatsapp">${icon('whatsapp')}Send on WhatsApp</a>
         <button class="btn" data-action="download-invoice-html" data-id="${i.id}">${icon('code')}HTML</button>
         ${i.paidPaisa<i.amountPaisa&&canWrite()?`<button class="btn" style="background:var(--emerald);color:#fff" data-action="pay-invoice" data-id="${i.id}">Record payment</button>`:''}
       </div>
