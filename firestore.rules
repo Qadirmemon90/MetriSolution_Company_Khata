@@ -179,7 +179,7 @@ service cloud.firestore {
       let after = getAfter(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data;
       let existsBefore = exists(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId));
       let beforePaid = existsBefore ? get(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data.paidPaisa : 0;
-      return after.paidPaisa == beforePaid + n;
+      return after.lastTxId == txId && after.paidPaisa == beforePaid + n;
     }
 
     function validInvoiceReversal(c, invoiceId, txId, n) {
@@ -231,15 +231,14 @@ service cloud.firestore {
       // Members subcollection
       // -------------------------------------------------------------
       match /members/{userId} {
-        allow get: if signedIn() && (request.auth.uid == userId || owner(companyId));
-        allow list: if owner(companyId);
+        allow read: if signedIn() && (request.auth.uid == userId || member(companyId));
 
         allow create: if signedIn() && userId == request.auth.uid
           && !exists(/databases/$(database)/documents/companies/$(companyId))
           && getAfter(/databases/$(database)/documents/companies/$(companyId)).data.ownerUid == request.auth.uid
           && request.resource.data.keys().hasOnly(['role', 'email', 'createdAt'])
           && request.resource.data.role == 'owner'
-          && request.resource.data.email == request.auth.token.email
+          && request.resource.data.email is string
           && request.resource.data.createdAt == request.time;
 
         allow update, delete: if false;

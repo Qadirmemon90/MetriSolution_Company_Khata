@@ -2704,5 +2704,13 @@ if(savedConnection?.config&&savedConnection.workspaceId){
         toast('Company workspace restored.');
       }
     })
-    .catch(err=>toast('Cloud session could not be restored. Open Login to sign in. '+friendlyError(err),true));
+    .catch(err=>{
+      console.warn('Firebase session restore error:', err);
+      safeStorage('metri.firebase','');
+      safeStorage('metri.session','');
+      bindStore(new DemoStore());
+      location.hash='#login';
+      render();
+      toast('Cloud session expired or workspace not found. Please Sign In or Create Workspace.', true);
+    });
 }
