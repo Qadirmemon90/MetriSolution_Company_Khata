@@ -1,37 +1,200 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function member(c) { return signedIn() && exists(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid)); }
-    function role(c) { return get(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid)).data.role; }
-    function writer(c) { return member(c) && role(c) in ['owner', 'accountant']; }
-    function owner(c) { return member(c) && role(c) == 'owner'; }
-    function text(value, size) { return value is string && value.size() > 0 && value.size() <= size; }
-    function optionalText(value, size) { return value is string && value.size() <= size; }
-    function amount(value) { return value is int && value > 0 && value <= 100000000000; }
-    function validDate(value) { return value is string && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'); }
-    function stamp(d) { return d.createdBy == request.auth.uid && d.createdAt == request.time; }
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: companies/{companyId}
+    // Fields:
+    //   - name: string (1–100 chars)
+    //   - currency: string ('PKR')
+    //   - timezone: string ('Asia/Karachi')
+    //   - ownerUid: string (immutable UID of the creator)
+    //   - bankInfo: map (optional bank transfer details)
+    //   - createdAt: timestamp
+    //
+    // Subcollection: companies/{companyId}/members/{userId}
+    // Fields:
+    //   - role: string ('owner', 'accountant', 'viewer')
+    //   - email: string
+    //   - createdAt: timestamp
+    //
+    // Subcollection: companies/{companyId}/accounts/{id}
+    // Fields:
+    //   - id: string
+    //   - name: string (1–80 chars)
+    //   - type: string ('Bank', 'Cash', 'Wallet')
+    //   - openingPaisa: int (>= 0, <= 100B)
+    //   - createdAt: timestamp, createdBy: string
+    //
+    // Subcollection: companies/{companyId}/employees/{id}
+    // Fields:
+    //   - id: string
+    //   - name: string (1–120 chars)
+    //   - role: string (1–120 chars)
+    //   - salaryPaisa: int (> 0, <= 100B)
+    //   - email: optional string
+    //   - joined: string (YYYY-MM-DD)
+    //   - createdAt: timestamp, createdBy: string
+    //
+    // Subcollection: companies/{companyId}/services/{id}
+    // Fields:
+    //   - id: string
+    //   - name: string (1–120 chars)
+    //   - category: string (1–80 chars)
+    //   - icon: optional string
+    //   - description: optional string
+    //   - features: optional list of strings
+    //   - packages: optional list of maps
+    //   - createdAt: timestamp, createdBy: string
+    //
+    // Subcollection: companies/{companyId}/clients/{id}
+    // Fields:
+    //   - id: string
+    //   - name: string (1–120 chars)
+    //   - contactPerson: optional string
+    //   - email: optional string
+    //   - phone: optional string
+    //   - city: optional string
+    //   - type: string ('monthly', 'one-time')
+    //   - status: optional string ('active', 'paused')
+    //   - serviceName: optional string
+    //   - monthlyRatePaisa: optional int
+    //   - monthlyDiscountPaisa: optional int
+    //   - billingDay: optional int (1–31)
+    //   - paymentTerms: optional string
+    //   - autoInvoice: optional bool
+    //   - notes: optional string
+    //   - lastInvoicedMonth: optional string
+    //   - createdAt: timestamp, createdBy: string
+    //
+    // Subcollection: companies/{companyId}/invoices/{id}
+    // Fields:
+    //   - id: string
+    //   - number: string (1–50 chars)
+    //   - clientId: optional string
+    //   - client: string (1–120 chars)
+    //   - email: optional string
+    //   - title: string (1–180 chars)
+    //   - subtotalPaisa: optional int
+    //   - discountPaisa: optional int
+    //   - amountPaisa: int (> 0, <= 100B)
+    //   - paidPaisa: int (>= 0, <= amountPaisa)
+    //   - issued: string (YYYY-MM-DD)
+    //   - due: string (YYYY-MM-DD, due >= issued)
+    //   - paymentTerms: optional string
+    //   - isMonthlyRecurring: optional bool
+    //   - items: optional list of maps
+    //   - bankInfo: optional map
+    //   - revision: int
+    //   - lastTxId: optional string
+    //   - lastAction: optional string
+    //   - createdAt: timestamp, createdBy: string
+    //
+    // Subcollection: companies/{companyId}/transactions/{id}
+    // Fields:
+    //   - id: string
+    //   - kind: string ('income', 'expense', 'funding', 'drawing', 'transfer', 'salary')
+    //   - amountPaisa: int (> 0, <= 100B)
+    //   - date: string (YYYY-MM-DD)
+    //   - description: string (1–180 chars)
+    //   - category: string (1–80 chars)
+    //   - party: optional string
+    //   - accountId: string (must reference existing account)
+    //   - toAccountId: optional string
+    //   - employeeId: optional string
+    //   - invoiceId: optional string
+    //   - createdAt: timestamp, createdBy: string
+    //
+    // Subcollection: companies/{companyId}/reversals/{id}
+    // Fields:
+    //   - transactionId: string
+    //   - reason: string (1–300 chars)
+    //   - createdAt: timestamp, createdBy: string
+    //
+    // Subcollection: companies/{companyId}/audit/{id}
+    // Fields:
+    //   - id: string
+    //   - action: string (1–80 chars)
+    //   - detail: optional string
+    //   - createdAt: timestamp, createdBy: string
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function member(c) {
+      return signedIn() && exists(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid));
+    }
+
+    function role(c) {
+      return get(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid)).data.role;
+    }
+
+    function writer(c) {
+      return member(c) && role(c) in ['owner', 'accountant'];
+    }
+
+    function owner(c) {
+      return member(c) && role(c) == 'owner';
+    }
+
+    function text(value, size) {
+      return value is string && value.size() > 0 && value.size() <= size;
+    }
+
+    function optionalText(value, size) {
+      return value is string && value.size() <= size;
+    }
+
+    function amount(value) {
+      return value is int && value > 0 && value <= 100000000000;
+    }
+
+    function validDate(value) {
+      return value is string && value.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$');
+    }
+
+    function stamp(d) {
+      return d.createdBy == request.auth.uid && d.createdAt == request.time;
+    }
+
     function audited(c, id) {
       let a = getAfter(/databases/$(database)/documents/companies/$(c)/audit/$(id)).data;
       return a.createdBy == request.auth.uid && a.createdAt == request.time;
     }
-    function accountExists(c, id) { return id is string && exists(/databases/$(database)/documents/companies/$(c)/accounts/$(id)); }
-    function validInvoiceReceipt(c, invoiceId, txId, n) {
-      let before = get(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data;
-      let after = getAfter(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data;
-      return after.lastTxId == txId && after.lastAction == 'payment' && after.paidPaisa == before.paidPaisa + n;
+
+    function accountExists(c, id) {
+      return id is string && exists(/databases/$(database)/documents/companies/$(c)/accounts/$(id));
     }
+
+    function validInvoiceReceipt(c, invoiceId, txId, n) {
+      let after = getAfter(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data;
+      let existsBefore = exists(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId));
+      let beforePaid = existsBefore ? get(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data.paidPaisa : 0;
+      return after.paidPaisa == beforePaid + n;
+    }
+
     function validInvoiceReversal(c, invoiceId, txId, n) {
       let before = get(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data;
       let after = getAfter(/databases/$(database)/documents/companies/$(c)/invoices/$(invoiceId)).data;
       return after.lastTxId == txId && after.lastAction == 'reversal' && after.paidPaisa == before.paidPaisa - n;
     }
+
     function validPaymentUpdate(c, invoiceId, d) {
       let t = getAfter(/databases/$(database)/documents/companies/$(c)/transactions/$(d.lastTxId)).data;
       return !exists(/databases/$(database)/documents/companies/$(c)/transactions/$(d.lastTxId))
         && t.invoiceId == invoiceId && t.kind == 'income'
         && d.paidPaisa == resource.data.paidPaisa + t.amountPaisa;
     }
+
     function validReversalUpdate(c, invoiceId, d) {
       let t = get(/databases/$(database)/documents/companies/$(c)/transactions/$(d.lastTxId)).data;
       let r = getAfter(/databases/$(database)/documents/companies/$(c)/reversals/$(d.lastTxId)).data;
@@ -39,27 +202,38 @@ service cloud.firestore {
         && r.transactionId == d.lastTxId && r.createdAt == request.time
         && t.invoiceId == invoiceId && d.paidPaisa == resource.data.paidPaisa - t.amountPaisa;
     }
+
+    // ===============================================================
+    // Collection Rules
+    // ===============================================================
     match /companies/{companyId} {
-      // A signed-in user may check a new workspace ID; existing company details require membership.
       allow get: if signedIn() && (!exists(/databases/$(database)/documents/companies/$(companyId)) || member(companyId));
       allow list: if false;
+
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly(['name', 'currency', 'timezone', 'ownerUid', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['name', 'currency', 'timezone', 'ownerUid', 'bankInfo', 'createdAt'])
         && text(request.resource.data.name, 100)
         && request.resource.data.currency == 'PKR'
         && request.resource.data.timezone == 'Asia/Karachi'
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.createdAt == request.time
+        && (!('bankInfo' in request.resource.data) || request.resource.data.bankInfo is map)
         && getAfter(/databases/$(database)/documents/companies/$(companyId)/members/$(request.auth.uid)).data.role == 'owner';
+
       allow update: if owner(companyId)
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
-        && text(request.resource.data.name, 100);
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'bankInfo'])
+        && text(request.resource.data.name, 100)
+        && (!('bankInfo' in request.resource.data) || request.resource.data.bankInfo is map);
+
       allow delete: if false;
+
+      // -------------------------------------------------------------
+      // Members subcollection
+      // -------------------------------------------------------------
       match /members/{userId} {
         allow get: if signedIn() && (request.auth.uid == userId || owner(companyId));
         allow list: if owner(companyId);
-        // Only the initial owner can bootstrap their membership with the company in one batch.
-        // Additional users are provisioned by a trusted administrator through the Firebase console.
+
         allow create: if signedIn() && userId == request.auth.uid
           && !exists(/databases/$(database)/documents/companies/$(companyId))
           && getAfter(/databases/$(database)/documents/companies/$(companyId)).data.ownerUid == request.auth.uid
@@ -67,43 +241,164 @@ service cloud.firestore {
           && request.resource.data.role == 'owner'
           && request.resource.data.email == request.auth.token.email
           && request.resource.data.createdAt == request.time;
+
         allow update, delete: if false;
       }
+
+      // -------------------------------------------------------------
+      // Accounts subcollection
+      // -------------------------------------------------------------
       match /accounts/{id} {
         allow read: if member(companyId);
         allow create: if writer(companyId)
-          && request.resource.data.keys().hasOnly(['id','name','type','openingPaisa','createdAt','createdBy'])
+          && request.resource.data.keys().hasOnly(['id', 'name', 'type', 'openingPaisa', 'createdAt', 'createdBy'])
           && request.resource.data.id == id && stamp(request.resource.data)
-          && text(request.resource.data.name,80)
-          && request.resource.data.type in ['Bank','Cash','Wallet']
+          && text(request.resource.data.name, 80)
+          && request.resource.data.type in ['Bank', 'Cash', 'Wallet']
           && request.resource.data.openingPaisa is int
           && request.resource.data.openingPaisa >= 0 && request.resource.data.openingPaisa <= 100000000000
-          && audited(companyId,id);
+          && audited(companyId, id);
+
         allow update, delete: if false;
       }
+
+      // -------------------------------------------------------------
+      // Employees subcollection
+      // -------------------------------------------------------------
       match /employees/{id} {
         allow read: if member(companyId);
         allow create: if writer(companyId)
-          && request.resource.data.keys().hasOnly(['id','name','role','salaryPaisa','email','joined','createdAt','createdBy'])
+          && request.resource.data.keys().hasOnly(['id', 'name', 'role', 'salaryPaisa', 'email', 'joined', 'createdAt', 'createdBy'])
           && request.resource.data.id == id && stamp(request.resource.data)
-          && text(request.resource.data.name,120) && text(request.resource.data.role,120)
+          && text(request.resource.data.name, 120) && text(request.resource.data.role, 120)
           && amount(request.resource.data.salaryPaisa)
-          && optionalText(request.resource.data.email,254) && validDate(request.resource.data.joined)
-          && audited(companyId,id);
+          && optionalText(request.resource.data.email, 254) && validDate(request.resource.data.joined)
+          && audited(companyId, id);
+
         allow update, delete: if false;
       }
-      match /transactions/{id} {
+
+      // -------------------------------------------------------------
+      // Services subcollection
+      // -------------------------------------------------------------
+      match /services/{id} {
         allow read: if member(companyId);
         allow create: if writer(companyId)
-          && request.resource.data.keys().hasOnly(['id','kind','amountPaisa','date','description','category','party','accountId','toAccountId','employeeId','invoiceId','createdAt','createdBy'])
           && request.resource.data.id == id && stamp(request.resource.data)
-          && request.resource.data.kind in ['income','expense','funding','drawing','transfer','salary']
+          && text(request.resource.data.name, 120)
+          && text(request.resource.data.category, 80)
+          && (!('icon' in request.resource.data) || optionalText(request.resource.data.icon, 40))
+          && (!('description' in request.resource.data) || optionalText(request.resource.data.description, 500))
+          && (!('features' in request.resource.data) || request.resource.data.features is list)
+          && (!('packages' in request.resource.data) || request.resource.data.packages is list)
+          && audited(companyId, id);
+
+        allow update: if writer(companyId)
+          && text(request.resource.data.name, 120)
+          && text(request.resource.data.category, 80)
+          && audited(companyId, id);
+
+        allow delete: if writer(companyId) && audited(companyId, id);
+      }
+
+      // -------------------------------------------------------------
+      // Clients & Monthly Retainers subcollection
+      // -------------------------------------------------------------
+      match /clients/{id} {
+        allow read: if member(companyId);
+        allow create: if writer(companyId)
+          && request.resource.data.id == id && stamp(request.resource.data)
+          && text(request.resource.data.name, 120)
+          && request.resource.data.type in ['monthly', 'one-time']
+          && (!('status' in request.resource.data) || request.resource.data.status in ['active', 'paused'])
+          && (!('contactPerson' in request.resource.data) || optionalText(request.resource.data.contactPerson, 120))
+          && (!('email' in request.resource.data) || optionalText(request.resource.data.email, 254))
+          && (!('phone' in request.resource.data) || optionalText(request.resource.data.phone, 40))
+          && (!('city' in request.resource.data) || optionalText(request.resource.data.city, 120))
+          && (!('serviceName' in request.resource.data) || optionalText(request.resource.data.serviceName, 180))
+          && (!('monthlyRatePaisa' in request.resource.data) || (request.resource.data.monthlyRatePaisa is int && request.resource.data.monthlyRatePaisa >= 0))
+          && (!('monthlyDiscountPaisa' in request.resource.data) || (request.resource.data.monthlyDiscountPaisa is int && request.resource.data.monthlyDiscountPaisa >= 0))
+          && (!('billingDay' in request.resource.data) || (request.resource.data.billingDay is int && request.resource.data.billingDay >= 1 && request.resource.data.billingDay <= 31))
+          && (!('paymentTerms' in request.resource.data) || optionalText(request.resource.data.paymentTerms, 40))
+          && (!('autoInvoice' in request.resource.data) || request.resource.data.autoInvoice is bool)
+          && (!('notes' in request.resource.data) || optionalText(request.resource.data.notes, 500))
+          && audited(companyId, id);
+
+        allow update: if writer(companyId)
+          && text(request.resource.data.name, 120)
+          && request.resource.data.type in ['monthly', 'one-time']
+          && (!('monthlyRatePaisa' in request.resource.data) || (request.resource.data.monthlyRatePaisa is int && request.resource.data.monthlyRatePaisa >= 0))
+          && (!('monthlyDiscountPaisa' in request.resource.data) || (request.resource.data.monthlyDiscountPaisa is int && request.resource.data.monthlyDiscountPaisa >= 0))
+          && audited(companyId, id);
+
+        allow delete: if writer(companyId) && audited(companyId, id);
+      }
+
+      // -------------------------------------------------------------
+      // Invoices subcollection (with multi-line items & advance deposits)
+      // -------------------------------------------------------------
+      match /invoices/{id} {
+        allow read: if member(companyId);
+
+        allow create: if writer(companyId)
+          && request.resource.data.keys().hasOnly([
+            'id', 'number', 'client', 'clientId', 'email', 'title',
+            'subtotalPaisa', 'discountPaisa', 'amountPaisa', 'paidPaisa',
+            'issued', 'due', 'paymentTerms', 'isMonthlyRecurring',
+            'items', 'bankInfo', 'revision', 'lastTxId', 'lastAction',
+            'createdAt', 'createdBy'
+          ])
+          && request.resource.data.id == id && stamp(request.resource.data)
+          && text(request.resource.data.number, 50)
+          && text(request.resource.data.client, 120)
+          && text(request.resource.data.title, 180)
+          && amount(request.resource.data.amountPaisa)
+          && request.resource.data.paidPaisa is int
+          && request.resource.data.paidPaisa >= 0
+          && request.resource.data.paidPaisa <= request.resource.data.amountPaisa
+          && (!('subtotalPaisa' in request.resource.data) || (request.resource.data.subtotalPaisa is int && request.resource.data.subtotalPaisa >= 0))
+          && (!('discountPaisa' in request.resource.data) || (request.resource.data.discountPaisa is int && request.resource.data.discountPaisa >= 0))
+          && (!('clientId' in request.resource.data) || optionalText(request.resource.data.clientId, 50))
+          && (!('email' in request.resource.data) || optionalText(request.resource.data.email, 254))
+          && (!('paymentTerms' in request.resource.data) || optionalText(request.resource.data.paymentTerms, 40))
+          && (!('isMonthlyRecurring' in request.resource.data) || request.resource.data.isMonthlyRecurring is bool)
+          && (!('items' in request.resource.data) || request.resource.data.items is list)
+          && (!('bankInfo' in request.resource.data) || request.resource.data.bankInfo is map)
+          && validDate(request.resource.data.issued) && validDate(request.resource.data.due)
+          && request.resource.data.due >= request.resource.data.issued
+          && audited(companyId, id);
+
+        allow update: if writer(companyId)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidPaisa', 'revision', 'lastTxId', 'lastAction'])
+          && request.resource.data.paidPaisa is int && request.resource.data.paidPaisa >= 0
+          && request.resource.data.paidPaisa <= resource.data.amountPaisa
+          && request.resource.data.revision == resource.data.revision + 1
+          && ((request.resource.data.lastAction == 'payment' && validPaymentUpdate(companyId, id, request.resource.data))
+              || (request.resource.data.lastAction == 'reversal' && validReversalUpdate(companyId, id, request.resource.data)));
+
+        allow delete: if false;
+      }
+
+      // -------------------------------------------------------------
+      // Transactions subcollection
+      // -------------------------------------------------------------
+      match /transactions/{id} {
+        allow read: if member(companyId);
+
+        allow create: if writer(companyId)
+          && request.resource.data.keys().hasOnly([
+            'id', 'kind', 'amountPaisa', 'date', 'description', 'category',
+            'party', 'accountId', 'toAccountId', 'employeeId', 'invoiceId',
+            'createdAt', 'createdBy'
+          ])
+          && request.resource.data.id == id && stamp(request.resource.data)
+          && request.resource.data.kind in ['income', 'expense', 'funding', 'drawing', 'transfer', 'salary']
           && amount(request.resource.data.amountPaisa) && validDate(request.resource.data.date)
-          && text(request.resource.data.description,180) && text(request.resource.data.category,80)
-          && optionalText(request.resource.data.party,120)
-          && accountExists(companyId,request.resource.data.accountId)
+          && text(request.resource.data.description, 180) && text(request.resource.data.category, 80)
+          && optionalText(request.resource.data.party, 120)
+          && accountExists(companyId, request.resource.data.accountId)
           && ((request.resource.data.kind == 'transfer'
-               && accountExists(companyId,request.resource.data.toAccountId)
+               && accountExists(companyId, request.resource.data.toAccountId)
                && request.resource.data.toAccountId != request.resource.data.accountId)
               || (request.resource.data.kind != 'transfer' && request.resource.data.toAccountId == ''))
           && ((request.resource.data.kind == 'salary'
@@ -111,54 +406,50 @@ service cloud.firestore {
               || (request.resource.data.kind != 'salary' && request.resource.data.employeeId == ''))
           && (request.resource.data.invoiceId == ''
               || (request.resource.data.kind == 'income'
-                  && validInvoiceReceipt(companyId,request.resource.data.invoiceId,id,request.resource.data.amountPaisa)))
-          && audited(companyId,id);
+                  && validInvoiceReceipt(companyId, request.resource.data.invoiceId, id, request.resource.data.amountPaisa)))
+          && audited(companyId, id);
+
         allow update, delete: if false;
       }
+
+      // -------------------------------------------------------------
+      // Reversals subcollection
+      // -------------------------------------------------------------
       match /reversals/{id} {
         allow read: if member(companyId);
+
         allow create: if writer(companyId)
-          && request.resource.data.keys().hasOnly(['transactionId','reason','createdAt','createdBy'])
+          && request.resource.data.keys().hasOnly(['transactionId', 'reason', 'createdAt', 'createdBy'])
           && request.resource.data.transactionId == id && stamp(request.resource.data)
-          && text(request.resource.data.reason,300)
+          && text(request.resource.data.reason, 300)
           && exists(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id))
           && (get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.invoiceId == ''
               || validInvoiceReversal(companyId,
                  get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.invoiceId,
-                 id,get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.amountPaisa))
-          && audited(companyId,'reverse-' + id);
+                 id, get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.amountPaisa))
+          && audited(companyId, 'reverse-' + id);
+
         allow update, delete: if false;
       }
-      match /invoices/{id} {
-        allow read: if member(companyId);
-        allow create: if writer(companyId)
-          && request.resource.data.keys().hasOnly(['id','number','client','email','title','amountPaisa','paidPaisa','issued','due','revision','lastTxId','lastAction','createdAt','createdBy'])
-          && request.resource.data.id == id && stamp(request.resource.data)
-          && text(request.resource.data.number,40) && text(request.resource.data.client,120)
-          && optionalText(request.resource.data.email,254) && text(request.resource.data.title,120)
-          && amount(request.resource.data.amountPaisa) && request.resource.data.paidPaisa == 0
-          && request.resource.data.revision == 0 && request.resource.data.lastTxId == '' && request.resource.data.lastAction == ''
-          && validDate(request.resource.data.issued) && validDate(request.resource.data.due)
-          && request.resource.data.due >= request.resource.data.issued
-          && audited(companyId,id);
-        allow update: if writer(companyId)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidPaisa','revision','lastTxId','lastAction'])
-          && request.resource.data.paidPaisa is int && request.resource.data.paidPaisa >= 0
-          && request.resource.data.paidPaisa <= resource.data.amountPaisa
-          && request.resource.data.revision == resource.data.revision + 1
-          && ((request.resource.data.lastAction == 'payment' && validPaymentUpdate(companyId,id,request.resource.data))
-              || (request.resource.data.lastAction == 'reversal' && validReversalUpdate(companyId,id,request.resource.data)));
-        allow delete: if false;
-      }
+
+      // -------------------------------------------------------------
+      // Audit log subcollection
+      // -------------------------------------------------------------
       match /audit/{id} {
         allow read: if member(companyId);
+
         allow create: if writer(companyId)
-          && request.resource.data.keys().hasOnly(['id','action','detail','createdAt','createdBy'])
+          && request.resource.data.keys().hasOnly(['id', 'action', 'detail', 'createdAt', 'createdBy'])
           && request.resource.data.id == id && stamp(request.resource.data)
-          && text(request.resource.data.action,80) && optionalText(request.resource.data.detail,500);
+          && text(request.resource.data.action, 80) && optionalText(request.resource.data.detail, 500);
+
         allow update, delete: if false;
       }
     }
-    match /{document=**} { allow read, write: if false; }
+
+    // Default deny for all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }
