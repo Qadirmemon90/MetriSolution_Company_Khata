@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {toPaisa,summary,balances,activeTransactions,invoiceStatus,validateTransaction,validateInvoice,validateClient,csv,today,addDays,formatInvoiceNote,formatWhatsAppNumber,DEFAULT_BANK_INFO} from '../dist/domain.js';
+import {toPaisa,toPaisaOrZero,summary,balances,activeTransactions,invoiceStatus,validateTransaction,validateInvoice,validateClient,validateSalarySlip,formatMonthYear,amountInWords,csv,today,addDays,formatInvoiceNote,formatWhatsAppNumber,DEFAULT_BANK_INFO} from '../dist/domain.js';
 import {DemoStore,emptyState,demoState} from '../dist/data.js';
 const memory=new Map();globalThis.localStorage={getItem:k=>memory.get(k)||null,setItem:(k,v)=>memory.set(k,v),removeItem:k=>memory.delete(k)};
 function fixture(){const s=emptyState();s.accounts=[{id:'bank',name:'Bank',openingPaisa:100000,type:'Bank'},{id:'cash',name:'Cash',openingPaisa:0,type:'Cash'}];return s;}
@@ -23,3 +23,119 @@ test('formatInvoiceNote embeds dynamic invoice number matching user screenshot',
 test('invoices support discount and validate non-negative discount',()=>{assert.doesNotThrow(()=>validateInvoice({client:'Client',title:'Work',subtotalPaisa:50000,discountPaisa:10000,amountPaisa:40000,issued:'2026-10-01',due:'2026-10-16'}));assert.throws(()=>validateInvoice({client:'Client',title:'Work',amountPaisa:1000,discountPaisa:-50,issued:'2026-10-01',due:'2026-10-16'}));});
 test('monthly retainer clients and AI monthly invoicing on 1st of month operate reliably',async()=>{memory.clear();const store=new DemoStore();await store.reset(true);await store.addClient({name:'Retainer Client Corp',type:'monthly',monthlyRatePaisa:5000000,monthlyDiscountPaisa:500000,serviceName:'Social Media Marketing',autoInvoice:true,status:'active'});const client=store.state.clients[0];assert.equal(client.type,'monthly');assert.equal(client.monthlyRatePaisa,5000000);const generated=await store.runMonthlyInvoicing('2026-11');assert.equal(generated.length,1);assert.equal(generated[0].issued,'2026-11-01');assert.equal(generated[0].due,'2026-11-16');assert.equal(generated[0].amountPaisa,4500000);assert.equal(generated[0].discountPaisa,500000);assert.equal(generated[0].isMonthlyRecurring,true);const rerun=await store.runMonthlyInvoicing('2026-11');assert.equal(rerun.length,0);});
 test('formatWhatsAppNumber formats Pakistani and international numbers to valid WhatsApp numbers',()=>{assert.equal(formatWhatsAppNumber('+92 300 4829102'),'923004829102');assert.equal(formatWhatsAppNumber('0300 1234567'),'923001234567');assert.equal(formatWhatsAppNumber('0300-1234567'),'923001234567');assert.equal(formatWhatsAppNumber('03219845120'),'923219845120');assert.equal(formatWhatsAppNumber('923335512498'),'923335512498');assert.equal(formatWhatsAppNumber(''),'');});
+
+test('amountInWords converts amounts to professional Pakistani Rupee words',()=>{
+  assert.equal(amountInWords(4500000), 'Forty-Five Thousand Pakistani Rupees Only');
+  assert.equal(amountInWords(12550000), 'One Hundred Twenty-Five Thousand Five Hundred Pakistani Rupees Only');
+  assert.equal(amountInWords(3500000), 'Thirty-Five Thousand Pakistani Rupees Only');
+  assert.equal(amountInWords(0), 'Zero Rupees Only');
+  assert.equal(toPaisaOrZero('0'), 0);
+  assert.equal(toPaisaOrZero(''), 0);
+  assert.equal(toPaisaOrZero('500'), 50000);
+  assert.equal(formatMonthYear('2026-10'), 'October 2026');
+  assert.equal(formatMonthYear('2026-05'), 'May 2026');
+});
+
+test('salary slips validate correctly and distinguish account-deducted vs historical slips',()=>{
+  const s = fixture();
+  s.employees = [{ id: 'emp-1', name: 'Zeeshan Ali', role: 'Dev', salaryPaisa: 5000000 }];
+  const validSlip = {
+    slipNumber: 'MS-PAY-001',
+    employeeId: 'emp-1',
+    month: '2026-10',
+    basicPaisa: 5000000,
+    grossPaisa: 5000000,
+    netSalaryPaisa: 5000000,
+    deductFromAccount: true,
+    accountId: 'bank',
+    issueDate: today()
+  };
+  assert.doesNotThrow(() => validateSalarySlip(validSlip, s));
+
+  // Invalid employee
+  assert.throws(() => validateSalarySlip({ ...validSlip, employeeId: 'missing' }, s));
+  // Invalid month
+  assert.throws(() => validateSalarySlip({ ...validSlip, month: 'invalid' }, s));
+  // Missing account when deductFromAccount is true
+  assert.throws(() => validateSalarySlip({ ...validSlip, accountId: 'missing' }, s));
+
+  // Historical slip without account deduction does not require valid account
+  const historicalSlip = {
+    slipNumber: 'MS-PAY-OLD',
+    employeeId: 'emp-1',
+    month: '2026-05',
+    basicPaisa: 5000000,
+    grossPaisa: 5000000,
+    netSalaryPaisa: 5000000,
+    deductFromAccount: false,
+    accountId: '',
+    issueDate: '2026-05-31'
+  };
+  assert.doesNotThrow(() => validateSalarySlip(historicalSlip, s));
+});
+
+test('creating salary slip with account deduction creates a transaction and updates balance, while historical does not', async () => {
+  memory.clear();
+  const store = new DemoStore();
+  await store.reset(true);
+  await store.addAccount({ name: 'HBL Bank', type: 'Bank', openingPaisa: 20000000 }); // 200,000 PKR
+  await store.addEmployee({ name: 'Faizan Sheikh', role: 'Full Stack', salaryPaisa: 5000000 });
+  const accId = store.state.accounts[0].id;
+  const empId = store.state.employees[0].id;
+
+  const initialBalance = balances(store.state)[accId];
+  assert.equal(initialBalance, 20000000);
+
+  // 1. Generate historical slip without deducting from account
+  await store.addSalarySlip({
+    slipNumber: 'MS-PAY-HISTORICAL-01',
+    employeeId: empId,
+    employeeName: 'Faizan Sheikh',
+    role: 'Full Stack',
+    month: '2026-08',
+    periodLabel: 'August 2026',
+    issueDate: '2026-08-31',
+    paymentMode: 'Bank Transfer',
+    deductFromAccount: false,
+    accountId: '',
+    basicPaisa: 5000000,
+    grossPaisa: 5000000,
+    netSalaryPaisa: 5000000,
+    notes: 'Old historical slip'
+  });
+
+  // Balance must remain unchanged!
+  assert.equal(balances(store.state)[accId], 20000000);
+  assert.equal(store.state.transactions.length, 0);
+  assert.equal(store.state.salarySlips.length, 1);
+
+  // 2. Generate current slip WITH account deduction
+  await store.addSalarySlip({
+    slipNumber: 'MS-PAY-CURRENT-01',
+    employeeId: empId,
+    employeeName: 'Faizan Sheikh',
+    role: 'Full Stack',
+    month: today().slice(0, 7),
+    periodLabel: formatMonthYear(today().slice(0, 7)),
+    issueDate: today(),
+    paymentMode: 'Bank Transfer',
+    deductFromAccount: true,
+    accountId: accId,
+    basicPaisa: 5000000,
+    grossPaisa: 5000000,
+    netSalaryPaisa: 5000000,
+    notes: 'Current month salary payment'
+  });
+
+  // Balance must be reduced by 50,000 PKR (5,000,000 paisa)
+  assert.equal(balances(store.state)[accId], 15000000);
+  assert.equal(store.state.transactions.length, 1);
+  assert.equal(store.state.salarySlips.length, 2);
+
+  // 3. Deleting account-deducted slip reverses transaction
+  const currentSlip = store.state.salarySlips.find(s => s.slipNumber === 'MS-PAY-CURRENT-01');
+  await store.deleteSalarySlip(currentSlip.id);
+  assert.equal(store.state.salarySlips.length, 1);
+  assert.equal(store.state.reversals.length, 1);
+  assert.equal(balances(store.state)[accId], 20000000);
+});

@@ -1,5 +1,5 @@
 import {DemoStore, DEFAULT_SERVICES, DEFAULT_CLIENTS} from './data.js';
-import {money,fullMoney,toPaisa,today,uid,addDays,formatInvoiceNote,formatWhatsAppNumber,balances,summary,activeTransactions,inPeriod,cashflow,expenseGroups,csv,invoiceStatus,CATEGORIES,DEFAULT_BANK_INFO} from './domain.js';
+import {money,fullMoney,toPaisa,toPaisaOrZero,today,uid,addDays,formatInvoiceNote,formatWhatsAppNumber,formatMonthYear,amountInWords,validateSalarySlip,balances,summary,activeTransactions,inPeriod,cashflow,expenseGroups,csv,invoiceStatus,CATEGORIES,DEFAULT_BANK_INFO} from './domain.js';
 import {firebaseConfig} from './firebase-config.js';
 
 const $=s=>document.querySelector(s), app=$('#app');
@@ -54,7 +54,8 @@ const paths={
   user:'<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
   repeat:'<path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/>',
   building:'<rect x="4" y="2" width="16" height="20" rx="2" ry="2"/><path d="M9 22v-4h6v4M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/>',
-  trash:'<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>'
+  trash:'<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+  slip:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>'
 };
 
 const icon=(name,cls='')=>`<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${paths[name]||paths.grid}</svg>`;
@@ -73,7 +74,16 @@ const pageNames={
 const kindNames={income:'Income',expense:'Expense',funding:'Owner funding',drawing:'Owner withdrawal',transfer:'Transfer',salary:'Salary'};
 const colors=['#7038db','#f59e0b','#3b82f6','#a855f7','#10b981','#6366f1','#ec4899'];
 
-let store=new DemoStore(), state=store.state, unsubscribe, period='month', query='', kindFilter='all', accountFilter='all', showReversed=false, menuOpen=false, toastTimer, lastFocus;
+function createWorkspaceStore(){
+  const s=new DemoStore();
+  s.mode='firebase';
+  s.role='owner';
+  s.id='metrisolution';
+  s.user={email:'metrisolution.team@gmail.com',uid:'company-owner'};
+  return s;
+}
+
+let store=createWorkspaceStore(), state=store.state, unsubscribe, period='month', query='', kindFilter='all', accountFilter='all', showReversed=false, menuOpen=false, toastTimer, lastFocus;
 let authTab='login', previousAuth={}, showPassword=false, showConfigDrawer=false, serviceFilter='all', clientFilter='all';
 
 function safeStorage(key,value){
@@ -88,7 +98,7 @@ if(safeStorage('metri.theme')==='dark') document.body.classList.add('theme-dark'
 
 /* Gated Portal Authentication Logic */
 function isAuthenticated(){
-  return store.mode==='firebase' || safeStorage('metri.session')==='authenticated';
+  return safeStorage('metri.session')==='authenticated';
 }
 
 function getPage(){
@@ -161,7 +171,7 @@ function periodTabs(){
 }
 
 function statusStrip(tabs=true){
-  return `<div class="status-strip"><span class="status-label"><i class="status-dot ${store.mode==='firebase'?'live':''}"></i>${store.mode==='demo'?'Demo workspace · illustrative sample data':`Cloud workspace · ${e(store.role)} access`}${!navigator.onLine?' · Offline':''}</span>${tabs?periodTabs():''}</div>`;
+  return `<div class="status-strip"><span class="status-label"><i class="status-dot live"></i>Cloud workspace · ${e(store.role)} access${!navigator.onLine?' · Offline':''}</span>${tabs?periodTabs():''}</div>`;
 }
 
 function getSavedConfig(){
@@ -291,12 +301,10 @@ function renderLoginPage(){
 
           <button class="btn primary full" type="submit" style="height:44px;font-size:14px;margin-top:10px">${icon(isCreate?'plus':'login')}${isCreate?'Create Workspace &amp; Sign in':'Sign in to Workspace'}</button>
 
-          <div class="login-demo-cta">
-            <span style="font-weight:600;color:var(--ink)">Testing or exploring features?</span>
-            <button type="button" class="btn" data-action="demo-login" style="justify-content:center;background:var(--surface-alt);border:1px solid var(--purple-border);color:var(--purple);font-weight:700">
-              ${icon('spark')} Sign In with Demo Account →
-            </button>
-            <span class="muted small" style="font-size:11px">Portal access requires signing in or demo authorization.</span>
+          <div class="login-secure-notice" style="margin-top:20px;padding:12px;background:var(--surface-alt);border:1px solid var(--line);border-radius:8px;text-align:center">
+            <span class="muted small" style="font-size:12px;display:flex;align-items:center;justify-content:center;gap:6px">
+              ${icon('shield')} Secured with Firebase Authentication &amp; Firestore Security Rules.
+            </span>
           </div>
         </form>
       </main>
@@ -325,7 +333,7 @@ function renderDashboard(page){
         <div class="workspace-square">${icon('building')}</div>
         <div>
           <strong>${e(state.company.name)}</strong>
-          <small><i class="status-dot ${store.mode==='firebase'?'live':''}"></i>${store.mode==='demo'?'Demo workspace':'Company workspace'}</small>
+          <small><i class="status-dot live"></i>Company workspace</small>
         </div>
       </div>
 
@@ -356,17 +364,17 @@ function renderDashboard(page){
 
       <div class="sidebar-bottom">
         <div class="sidebar-note">
-          <span class="mini-icon">${icon(store.mode==='demo'?'spark':'shield')}</span>
-          <strong>${store.mode==='demo'?'Demo workspace':'Cloud synced'}</strong>
-          <p>${store.mode==='demo'?'Authenticated demo session. Changes save in this browser.':'Your company books sync in real-time with Firebase Firestore.'}</p>
-          <button data-action="${store.mode==='demo'?'connect':'audit'}">${icon(store.mode==='demo'?'link':'clock')}${store.mode==='demo'?'Connect Firebase':'Activity Log'}</button>
+          <span class="mini-icon">${icon('shield')}</span>
+          <strong>Cloud synced</strong>
+          <p>Your company books sync in real-time with Firebase Firestore.</p>
+          <button data-action="audit">${icon('clock')}Activity Log</button>
         </div>
 
         <div class="profile">
-          <span class="avatar">${store.mode==='demo'?'MS':initial(store.user.email||'MS')}</span>
+          <span class="avatar">${initial(store.user?.email||'MS')}</span>
           <div>
-            <strong>${store.mode==='demo'?'Demo workspace':e(store.user.email?.split('@')[0])}</strong>
-            <small>${store.mode==='demo'?'Authorized Demo':e(store.role+' · '+store.id)}</small>
+            <strong>${e(store.user?.email?.split('@')[0]||'MetriSolution')}</strong>
+            <small>${e(store.role+' · '+store.id)}</small>
           </div>
           <button class="icon-button" data-action="logout" title="Sign out / Lock portal" aria-label="Sign out" style="margin-left:auto;color:var(--sidebar-muted)">
             ${icon('logout')}
@@ -393,15 +401,9 @@ function renderDashboard(page){
             <span class="shortcut">⌘ K</span>
           </label>
 
-          ${store.mode==='demo'?`
-            <span class="top-status-pill demo" title="Authorized demo mode">
-              <span class="status-dot"></span>Demo workspace
-            </span>
-          `:`
-            <span class="top-status-pill live">
-              <span class="status-dot"></span>${e(store.id)}
-            </span>
-          `}
+          <span class="top-status-pill live">
+            <span class="status-dot"></span>${e(store.id)}
+          </span>
 
           <div class="top-separator"></div>
 
@@ -424,7 +426,7 @@ function renderDashboard(page){
         ${renderPage(page)}
         <footer class="page-footer">
           <span>© ${new Date().getFullYear()} <strong>MetriSolution Pvt LTD</strong> · Your business, in balance.</span>
-          <span><i class="footer-dot"></i>${store.mode==='demo'?'Demo workspace · saved in browser':'Firebase workspace'} &nbsp; · &nbsp; PKR</span>
+          <span><i class="footer-dot"></i>Firebase workspace &nbsp; · &nbsp; PKR</span>
         </footer>
       </div>
     </main>
@@ -1264,7 +1266,14 @@ function accountsPage(){
    ========================================================================== */
 function teamPage(){
   const tx=activeTransactions(state).filter(t=>t.kind==='salary'&&inPeriod(t,'month'));
-  return `${intro('Team & payroll','People behind the work. Payments with a clear record.',primary('add-employee','Add team member'))}
+  const slips=[...(state.salarySlips||[])].sort((a,b)=>(b.issueDate||'').localeCompare(a.issueDate||''));
+
+  return `${intro('Team & payroll','People behind the work. Payments with a clear record.',`
+    <button class="btn" data-action="create-salary-slip" style="background:var(--purple-soft);color:var(--purple);border:1px solid var(--purple-border)">
+      ${icon('slip')}Create salary slip
+    </button>
+    ${canWrite()?primary('add-employee','Add team member'):''}
+  `)}
   ${statusStrip(false)}
   <div class="inline-alert">${icon('clock')} Monthly payroll tracks actual salary payments. Team records are separate from login access.</div>
   <div class="page-grid">
@@ -1293,16 +1302,113 @@ function teamPage(){
           <span>Remaining this month</span>
           <strong>${fullMoney(due)}</strong>
         </div>
-        ${canWrite()?`
-          <button class="btn full ${due?'primary':''}" data-action="pay-salary" data-id="${emp.id}" ${!due?'disabled':''}>
-            ${icon(due?'wallet':'check')}${due?'Record salary payment':'Salary settled'}
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          ${canWrite()?`
+            <button class="btn ${due?'primary':''}" style="flex:1" data-action="pay-salary" data-id="${emp.id}" ${!due?'disabled':''}>
+              ${icon(due?'wallet':'check')}${due?'Record payment':'Settled'}
+            </button>
+          `:''}
+          <button class="btn" style="flex:1" data-action="create-salary-slip" data-id="${emp.id}" title="Generate digital salary slip">
+            ${icon('slip')}Salary slip
           </button>
-        `:''}
+        </div>
       </section>`;
     }).join('')}
   </div>
   ${!state.employees.length?`<section class="card">${empty('Add your team to track monthly salary payments.','team')}</section>`:''}
-  <p class="note">A salary payment is an expense. The monthly salary is a target and does not reduce cash until a payment is recorded. Salary paid is grouped by payment date.</p>`;
+
+  <!-- Digital Salary Slips Management Section -->
+  <section class="card table-card" style="margin-top:28px">
+    <div class="table-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;padding:16px 20px;border-bottom:1px solid var(--line)">
+      <div>
+        <h2 style="font-size:17px;font-weight:750;margin:0 0 2px;color:var(--ink)">Digital Salary Slips</h2>
+        <p class="muted small" style="margin:0">Official company payslips with PDF download, print, WhatsApp sharing, and optional cashbook deduction.</p>
+      </div>
+      <button class="btn primary small" data-action="create-salary-slip">
+        ${icon('plus')}New salary slip
+      </button>
+    </div>
+    ${slips.length ? `
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Slip #</th>
+              <th>Employee</th>
+              <th>Pay Period</th>
+              <th>Issue Date</th>
+              <th style="text-align:right">Net Salary</th>
+              <th>Cashbook Status</th>
+              <th style="text-align:right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${slips.map(s => `
+              <tr>
+                <td>
+                  <a href="#" data-action="view-salary-slip" data-id="${s.id}" style="font-weight:700;color:var(--purple);text-decoration:none">
+                    #${e(s.slipNumber)}
+                  </a>
+                </td>
+                <td>
+                  <div style="font-weight:650">${e(s.employeeName)}</div>
+                  <div class="muted small">${e(s.role || '')}</div>
+                </td>
+                <td>
+                  <span class="pill" style="font-size:11px;font-weight:600">${e(s.periodLabel || s.month)}</span>
+                </td>
+                <td>${new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric'}).format(new Date(s.issueDate+'T12:00:00Z'))}</td>
+                <td style="text-align:right;font-weight:700;color:var(--ink)">
+                  ${fullMoney(s.netSalaryPaisa)}
+                </td>
+                <td>
+                  ${s.deductFromAccount ? `
+                    <span class="badge" style="background:var(--green-soft);color:var(--green);border:1px solid var(--green-border);font-size:11px">
+                      ${icon('check')} Deducted (${e(s.accountName || 'Account')})
+                    </span>
+                  ` : `
+                    <span class="badge" style="background:var(--blue-soft);color:var(--blue);border:1px solid var(--blue-border);font-size:11px">
+                      Standalone / Historical
+                    </span>
+                  `}
+                </td>
+                <td style="text-align:right">
+                  <div style="display:inline-flex;gap:4px">
+                    <button class="icon-button" data-action="view-salary-slip" data-id="${s.id}" title="View salary slip">
+                      ${icon('eye')}
+                    </button>
+                    <button class="icon-button" data-action="download-salary-slip-pdf" data-id="${s.id}" title="Download PDF">
+                      ${icon('download')}
+                    </button>
+                    <button class="icon-button" data-action="print-salary-slip" data-id="${s.id}" title="Print / System PDF">
+                      ${icon('print')}
+                    </button>
+                    <a href="${getSalarySlipWhatsAppUrl(s)}" target="_blank" rel="noopener" class="icon-button" title="Send on WhatsApp">
+                      ${icon('whatsapp')}
+                    </a>
+                    ${canWrite()?`
+                      <button class="icon-button" style="color:var(--red)" data-action="delete-salary-slip" data-id="${s.id}" title="Delete slip">
+                        ${icon('trash')}
+                      </button>
+                    `:''}
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    ` : `
+      <div style="padding:32px 20px;text-align:center">
+        <p class="muted" style="margin-bottom:12px">No salary slips created yet.</p>
+        <button class="btn" data-action="create-salary-slip">
+          ${icon('plus')}Create your first salary slip
+        </button>
+      </div>
+    `}
+  </section>
+
+  <p class="note" style="margin-top:16px">A salary payment is an expense. The monthly salary is a target and does not reduce cash until a payment is recorded. Salary paid is grouped by payment date.</p>`;
 }
 
 /* ==========================================================================
@@ -1400,20 +1506,23 @@ function settingsPage(){
     </section>
 
     <section class="card settings-card">
-      <h2>${store.mode==='demo'?'Cloud authentication':'Firebase connected'}</h2>
-      <p class="muted small">${store.mode==='demo'?'You are using an authorized browser demo session. Connect Firebase for real multi-user team synchronization.':'Authenticated company workspace with Firestore Security Rules.'}</p>
-      <div class="detail-list">
-        <div><dt>Data mode</dt><dd>${store.mode==='demo'?'Authorized Demo':'Cloud Firestore'}</dd></div>
-        <div><dt>Your role</dt><dd>${e(store.role)}</dd></div>
-        ${store.mode==='firebase'?`
-          <div><dt>Workspace ID</dt><dd>${e(store.id)}</dd></div>
-          <div><dt>Account</dt><dd>${e(store.user.email)}</dd></div>
-        `:''}
+      <div class="settings-header">
+        <span class="avatar" style="background:var(--green-soft);color:var(--green)">${icon('shield')}</span>
+        <div>
+          <h2>Firebase connected</h2>
+          <p class="muted small">Authenticated company workspace protected by Cloud Firestore Security Rules.</p>
+        </div>
       </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <a class="btn primary" href="#login">${icon(store.mode==='demo'?'link':'login')}${store.mode==='demo'?'Connect Firebase / Sign In':'Switch Account / Sign In'}</a>
+      <div class="detail-list" style="margin-top:14px">
+        <div><dt>Data mode</dt><dd>Cloud Firestore</dd></div>
+        <div><dt>Workspace ID</dt><dd><code>${e(store.id||'metrisolution')}</code></dd></div>
+        <div><dt>Account</dt><dd>${e(store.user?.email||'metrisolution.team@gmail.com')}</dd></div>
+        <div><dt>Your role</dt><dd><span class="badge" style="background:var(--purple-soft);color:var(--purple)">${e(store.role||'owner')}</span></dd></div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
+        <a class="btn primary" href="#login">${icon('login')}Switch Account / Sign In</a>
         <button class="btn" data-action="logout">${icon('logout')}Sign out &amp; Lock Portal</button>
-        <a class="btn" href="./guide.html" target="_blank" rel="noopener">Setup guide</a>
+        <button class="btn" data-action="audit">${icon('clock')}Activity log</button>
       </div>
     </section>
 
@@ -1435,13 +1544,6 @@ function settingsPage(){
         <button class="btn" data-action="backup">${icon('export')}Download backup</button>
         <button class="btn" data-action="audit">${icon('clock')}Activity log</button>
       </div>
-      ${store.mode==='demo'?`
-        <div class="note">Ready to try your own numbers? Clear sample records to start an empty browser workspace.</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button class="btn danger" data-action="clear-demo">Clear demo records</button>
-          <button class="btn" data-action="reset-demo">Restore sample data</button>
-        </div>
-      `:''}
     </section>
   </div>`;
 }
@@ -2093,6 +2195,569 @@ function downloadInvoice(id){
 }
 
 /* ==========================================================================
+   DIGITAL SALARY SLIP SYSTEM
+   ========================================================================== */
+function officialSalarySlipMarkup(slip){
+  const companyName = state.company.name || 'MetriSolution Pvt LTD';
+  const period = slip.periodLabel || formatMonthYear(slip.month);
+
+  return `<div class="salary-slip-sheet-wrap" id="salary-slip-sheet-${slip.id}">
+    <div class="slip-header">
+      <div class="slip-brand">
+        <div style="display:flex;align-items:center;gap:12px">
+          <img src="./assets/metrisolution-mark.png" alt="MetriSolution" class="slip-brand-logo">
+          <div>
+            <div class="slip-company-name">${e(companyName)}</div>
+            <div class="slip-tagline">"Innovating Your Digital Future" · Technology &amp; Business Solutions</div>
+            <div class="slip-company-meta">Official Digital Payroll System · Verified &amp; Authorized</div>
+          </div>
+        </div>
+      </div>
+      <div class="slip-title-box">
+        <div class="slip-doc-badge">CONFIDENTIAL PAYSLIP</div>
+        <h1 class="slip-title">SALARY SLIP</h1>
+        <div class="slip-ref-no">Slip Ref: <strong>#${e(slip.slipNumber)}</strong></div>
+        <div class="slip-period-badge">${e(period)}</div>
+      </div>
+    </div>
+
+    <div class="slip-divider"></div>
+
+    <div class="slip-info-grid">
+      <div class="slip-info-item">
+        <span class="slip-info-label">EMPLOYEE NAME</span>
+        <span class="slip-info-val highlight">${e(slip.employeeName)}</span>
+      </div>
+      <div class="slip-info-item">
+        <span class="slip-info-label">DESIGNATION / ROLE</span>
+        <span class="slip-info-val">${e(slip.role || 'Team Member')}</span>
+      </div>
+      <div class="slip-info-item">
+        <span class="slip-info-label">PAY PERIOD</span>
+        <span class="slip-info-val">${e(period)}</span>
+      </div>
+      <div class="slip-info-item">
+        <span class="slip-info-label">ISSUE DATE</span>
+        <span class="slip-info-val">${new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric'}).format(new Date(slip.issueDate+'T12:00:00Z'))}</span>
+      </div>
+      <div class="slip-info-item">
+        <span class="slip-info-label">PAYMENT MODE</span>
+        <span class="slip-info-val">${e(slip.paymentMode || 'Bank Transfer')}</span>
+      </div>
+      <div class="slip-info-item">
+        <span class="slip-info-label">ACCOUNT / RECORD</span>
+        <span class="slip-info-val">${slip.deductFromAccount ? `${e(slip.accountName || 'Bank')} (Deducted)` : 'Historical / Standalone Record'}</span>
+      </div>
+    </div>
+
+    <div class="slip-breakdown-wrap">
+      <div class="slip-col slip-earnings-col">
+        <div class="slip-col-header">
+          <span>EARNINGS</span>
+          <span>AMOUNT (PKR)</span>
+        </div>
+        <table class="slip-table">
+          <tbody>
+            <tr>
+              <td>Basic Salary</td>
+              <td class="num">${money(slip.basicPaisa)}</td>
+            </tr>
+            ${slip.medicalPaisa ? `<tr><td>Medical Allowance</td><td class="num">${money(slip.medicalPaisa)}</td></tr>` : ''}
+            ${slip.conveyancePaisa ? `<tr><td>Conveyance / Fuel Allowance</td><td class="num">${money(slip.conveyancePaisa)}</td></tr>` : ''}
+            ${slip.bonusPaisa ? `<tr><td>Performance Bonus / Incentive</td><td class="num">${money(slip.bonusPaisa)}</td></tr>` : ''}
+            ${slip.otherAllowancePaisa ? `<tr><td>Other Allowances</td><td class="num">${money(slip.otherAllowancePaisa)}</td></tr>` : ''}
+          </tbody>
+          <tfoot>
+            <tr class="slip-subtotal-row">
+              <td><strong>Gross Earnings</strong></td>
+              <td class="num"><strong>PKR ${money(slip.grossPaisa)}</strong></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div class="slip-col slip-deductions-col">
+        <div class="slip-col-header">
+          <span>DEDUCTIONS</span>
+          <span>AMOUNT (PKR)</span>
+        </div>
+        <table class="slip-table">
+          <tbody>
+            ${slip.taxPaisa ? `<tr><td>Income Tax / Withholding</td><td class="num negative">- ${money(slip.taxPaisa)}</td></tr>` : ''}
+            ${slip.advancePaisa ? `<tr><td>Salary Advance / Loan Recovery</td><td class="num negative">- ${money(slip.advancePaisa)}</td></tr>` : ''}
+            ${slip.leavesPaisa ? `<tr><td>Unpaid Leaves / LOP</td><td class="num negative">- ${money(slip.leavesPaisa)}</td></tr>` : ''}
+            ${slip.otherDeductionPaisa ? `<tr><td>Other Deductions</td><td class="num negative">- ${money(slip.otherDeductionPaisa)}</td></tr>` : ''}
+            ${(!slip.taxPaisa && !slip.advancePaisa && !slip.leavesPaisa && !slip.otherDeductionPaisa) ? `<tr><td style="color:#888;font-style:italic">No Deductions Applicable</td><td class="num">0.00</td></tr>` : ''}
+          </tbody>
+          <tfoot>
+            <tr class="slip-subtotal-row">
+              <td><strong>Total Deductions</strong></td>
+              <td class="num"><strong>PKR ${money(slip.totalDeductionsPaisa || 0)}</strong></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+
+    <div class="slip-net-banner">
+      <div class="slip-net-left">
+        <div class="slip-net-label">NET TAKE-HOME SALARY</div>
+        <div class="slip-words">${e(amountInWords(slip.netSalaryPaisa))}</div>
+        ${slip.notes ? `<div class="slip-note-text"><strong>Note:</strong> ${e(slip.notes)}</div>` : ''}
+      </div>
+      <div class="slip-net-right">
+        <div class="slip-net-amount">PKR ${money(slip.netSalaryPaisa)}</div>
+        <div class="slip-paid-stamp">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="m9 16.17 9.83-9.83 1.41 1.41L9 19 3.59 13.59 5 12.17l4 4Z"/></svg>
+          PAID &amp; SETTLED
+        </div>
+      </div>
+    </div>
+
+    <div class="slip-footer">
+      <div class="slip-sig-box">
+        <div class="slip-sig-line"></div>
+        <div class="slip-sig-text">Employee Signature</div>
+        <div class="slip-sig-sub">${e(slip.employeeName)}</div>
+      </div>
+      <div class="slip-seal-box">
+        <div class="slip-stamp-circle">
+          <span>METRISOLUTION</span>
+          <strong>VERIFIED</strong>
+          <small>PAYROLL SEAL</small>
+        </div>
+        <div class="slip-digital-text">Electronically Generated Digital Slip</div>
+      </div>
+      <div class="slip-sig-box right">
+        <div class="slip-sig-line"></div>
+        <div class="slip-sig-text">Authorized Signatory</div>
+        <div class="slip-sig-sub">Finance &amp; HR Department · ${e(companyName)}</div>
+      </div>
+    </div>
+
+    <div class="slip-legal-disclaimer">
+      This is a confidential, computer-generated digital salary slip issued by ${e(companyName)}. If electronically verified with company payroll ledger, no physical signature is required. Generated on ${new Date().toLocaleDateString('en-GB')}.
+    </div>
+  </div>`;
+}
+
+function getSalarySlipFullHtml(slip){
+  return `<!doctype html><html><head><meta charset="utf-8">
+  <title>SalarySlip_${e(slip.employeeName)}_${e(slip.month)}</title>
+  <style>
+    @page { size: A4 portrait; margin: 10mm 12mm; }
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 20px auto; max-width: 820px; padding: 20px; color: #111; background: #fff; line-height: 1.45; }
+    .salary-slip-sheet-wrap { border: 1px solid #d1d5db; border-radius: 8px; padding: 24px; background: #fff; }
+    .slip-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
+    .slip-brand-logo { height: 48px; width: auto; }
+    .slip-company-name { font-size: 18px; font-weight: 800; color: #111827; }
+    .slip-tagline { font-size: 11px; color: #4b5563; }
+    .slip-company-meta { font-size: 10px; color: #6b7280; margin-top: 2px; }
+    .slip-title-box { text-align: right; }
+    .slip-doc-badge { display: inline-block; font-size: 10px; font-weight: 700; background: #ede9fe; color: #6d28d9; padding: 3px 8px; border-radius: 4px; letter-spacing: 0.5px; }
+    .slip-title { font-size: 24px; font-weight: 900; margin: 4px 0 2px; color: #1f2937; letter-spacing: 0.5px; }
+    .slip-ref-no { font-size: 13px; color: #4b5563; }
+    .slip-period-badge { font-size: 12px; font-weight: 700; color: #111827; margin-top: 4px; }
+    .slip-divider { height: 2px; background: #e5e7eb; margin: 16px 0; }
+    .slip-info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; background: #f9fafb; padding: 14px 16px; border-radius: 6px; border: 1px solid #e5e7eb; margin-bottom: 20px; font-size: 12px; }
+    .slip-info-label { display: block; font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; margin-bottom: 2px; }
+    .slip-info-val { font-size: 13px; font-weight: 600; color: #111827; }
+    .slip-info-val.highlight { color: #6d28d9; font-weight: 700; }
+    .slip-breakdown-wrap { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+    .slip-col { border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden; }
+    .slip-col-header { display: flex; justify-content: space-between; padding: 8px 12px; background: #1f2937; color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .slip-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .slip-table td { padding: 8px 12px; border-bottom: 1px solid #f3f4f6; }
+    .slip-table td.num { text-align: right; font-weight: 600; }
+    .slip-table td.num.negative { color: #dc2626; }
+    .slip-subtotal-row td { background: #f9fafb; font-weight: 700; border-top: 2px solid #e5e7eb; border-bottom: none; }
+    .slip-net-banner { display: flex; justify-content: space-between; align-items: center; background: #f5f3ff; border: 2px solid #ddd6fe; border-radius: 8px; padding: 16px 20px; margin-bottom: 24px; }
+    .slip-net-label { font-size: 12px; font-weight: 800; color: #5b21b6; text-transform: uppercase; letter-spacing: 0.5px; }
+    .slip-words { font-size: 12px; color: #374151; font-style: italic; margin-top: 4px; }
+    .slip-note-text { font-size: 11px; color: #4b5563; margin-top: 6px; }
+    .slip-net-amount { font-size: 24px; font-weight: 900; color: #4c1d95; text-align: right; }
+    .slip-paid-stamp { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 800; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; padding: 3px 8px; border-radius: 4px; margin-top: 4px; }
+    .slip-footer { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 36px; margin-bottom: 16px; padding: 0 10px; }
+    .slip-sig-box { width: 200px; text-align: center; }
+    .slip-sig-box.right { text-align: center; }
+    .slip-sig-line { border-bottom: 1px dashed #9ca3af; margin-bottom: 8px; height: 35px; }
+    .slip-sig-text { font-size: 12px; font-weight: 700; color: #1f2937; }
+    .slip-sig-sub { font-size: 10px; color: #6b7280; }
+    .slip-seal-box { text-align: center; }
+    .slip-stamp-circle { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; width: 84px; height: 84px; border: 2px dashed #6d28d9; border-radius: 50%; color: #6d28d9; padding: 6px; transform: rotate(-5deg); }
+    .slip-stamp-circle span { font-size: 8px; font-weight: 800; letter-spacing: 0.5px; }
+    .slip-stamp-circle strong { font-size: 11px; font-weight: 900; margin: 1px 0; }
+    .slip-stamp-circle small { font-size: 7px; font-weight: 750; }
+    .slip-digital-text { font-size: 9px; color: #6b7280; margin-top: 4px; font-weight: 500; }
+    .slip-legal-disclaimer { border-top: 1px solid #e5e7eb; padding-top: 10px; font-size: 9px; color: #9ca3af; text-align: center; line-height: 1.4; }
+    @media print {
+      body { margin: 0; padding: 0; background: #fff; }
+      .salary-slip-sheet-wrap { border: none; padding: 0; }
+    }
+  </style></head><body>
+    ${officialSalarySlipMarkup(slip)}
+  </body></html>`;
+}
+
+function printSalarySlip(id){
+  const slip = (state.salarySlips || []).find(s => s.id === id);
+  if(!slip) return;
+
+  let iframe = document.getElementById('slip-print-frame');
+  if(!iframe){
+    iframe = document.createElement('iframe');
+    iframe.id = 'slip-print-frame';
+    iframe.style.position = 'fixed';
+    iframe.style.top = '-9999px';
+    iframe.style.left = '-9999px';
+    iframe.style.width = '1px';
+    iframe.style.height = '1px';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+  }
+
+  const doc = iframe.contentWindow?.document || iframe.contentDocument;
+  if(!doc){
+    window.print();
+    return;
+  }
+
+  doc.open();
+  doc.write(getSalarySlipFullHtml(slip));
+  doc.close();
+
+  toast('Opening print dialog…');
+  setTimeout(()=>{
+    try{
+      const win = iframe.contentWindow || iframe;
+      win.focus();
+      win.print();
+    }catch(err){
+      console.warn('Iframe print fallback:', err);
+      window.print();
+    }
+  }, 400);
+}
+
+async function downloadSalarySlipPdf(id){
+  const slip = (state.salarySlips || []).find(s => s.id === id);
+  if(!slip) return;
+  toast('Preparing PDF download…');
+
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:760px;background:#fff;padding:24px 30px;color:#111;font-family:system-ui,-apple-system,sans-serif;box-sizing:border-box;';
+  container.innerHTML = officialSalarySlipMarkup(slip);
+  document.body.appendChild(container);
+
+  if(window.html2pdf){
+    const opt = {
+      margin: [8, 10, 8, 10],
+      filename: `SalarySlip_${e(slip.employeeName).replace(/\s+/g, '_')}_${e(slip.month || 'slip')}.pdf`,
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+    try {
+      await window.html2pdf().set(opt).from(container).save();
+      toast('Salary Slip PDF downloaded.');
+    } catch(err) {
+      console.error(err);
+      printSalarySlip(id);
+    } finally {
+      container.remove();
+    }
+  } else {
+    container.remove();
+    printSalarySlip(id);
+  }
+}
+
+function getSalarySlipWhatsAppUrl(slip){
+  const emp = (state.employees || []).find(e => e.id === slip.employeeId);
+  const phone = formatWhatsAppNumber(emp?.phone || emp?.email || '');
+  const monthName = slip.periodLabel || formatMonthYear(slip.month);
+  const net = money(slip.netSalaryPaisa);
+  const basic = money(slip.basicPaisa);
+  const gross = money(slip.grossPaisa);
+  const deductions = money(slip.totalDeductionsPaisa || 0);
+  const company = state.company.name || 'MetriSolution Pvt LTD';
+
+  const text = `*${company} · Digital Salary Slip*\n` +
+    `━━━━━━━━━━━━━━━━━━━━━\n` +
+    `👤 *Employee:* ${slip.employeeName}\n` +
+    `💼 *Role:* ${slip.role || 'Team Member'}\n` +
+    `📅 *Pay Period:* ${monthName}\n` +
+    `🧾 *Slip Ref:* #${slip.slipNumber}\n` +
+    `💰 *Basic Salary:* PKR ${basic}\n` +
+    (slip.grossPaisa !== slip.basicPaisa ? `📈 *Gross Earnings:* PKR ${gross}\n` : '') +
+    (deductions !== '0.00' && deductions !== '0' ? `📉 *Deductions:* PKR ${deductions}\n` : '') +
+    `━━━━━━━━━━━━━━━━━━━━━\n` +
+    `✅ *NET TAKE-HOME:* PKR ${net}\n` +
+    `🏛️ *Payment Status:* PAID & SETTLED\n` +
+    `━━━━━━━━━━━━━━━━━━━━━\n` +
+    `_This is an official computer-generated digital payslip issued by ${company}._`;
+
+  if(phone){
+    return `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(text)}`;
+  }
+  return `https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`;
+}
+
+function viewSalarySlip(id){
+  const slip = (state.salarySlips || []).find(s => s.id === id);
+  if(!slip) return;
+  modal(`Salary Slip #${slip.slipNumber}`, `${slip.employeeName} · ${slip.periodLabel || slip.month}`, `
+    ${officialSalarySlipMarkup(slip)}
+    <div class="modal-actions" style="justify-content:space-between;flex-wrap:wrap;gap:10px;margin-top:16px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <span class="badge" style="background:var(--green-soft);color:var(--green);border:1px solid var(--green-border)">Paid</span>
+        ${slip.deductFromAccount ? `<span class="pill" style="font-size:11px;background:var(--purple-soft);color:var(--purple);border:1px solid var(--purple-border)">Account Deducted: ${e(slip.accountName||'Bank')}</span>` : `<span class="pill" style="font-size:11px;background:var(--blue-soft);color:var(--blue);border:1px solid var(--blue-border)">Standalone / Historical</span>`}
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button class="btn primary" data-action="download-salary-slip-pdf" data-id="${slip.id}">${icon('download')}Download PDF</button>
+        <button class="btn" style="background:var(--purple-soft);color:var(--purple);border:1px solid var(--purple-border)" data-action="print-salary-slip" data-id="${slip.id}">${icon('print')}Print / System PDF</button>
+        <a href="${getSalarySlipWhatsAppUrl(slip)}" target="_blank" rel="noopener" class="btn btn-whatsapp">${icon('whatsapp')}Send on WhatsApp</a>
+        ${canWrite()?`<button class="btn" style="color:var(--red);border:1px solid var(--red-border)" data-action="delete-salary-slip" data-id="${slip.id}">${icon('trash')}Delete</button>`:''}
+      </div>
+    </div>
+  `, { wide: true });
+}
+
+function showCreateSalarySlip(employeeId = '', prefill = {}){
+  if(!state.employees.length){
+    toast('Add a team member first.');
+    showAddEmployee();
+    return;
+  }
+  const defaultEmp = state.employees.find(x => x.id === employeeId) || state.employees[0];
+  const curMonth = today().slice(0, 7);
+  const selectedMonth = prefill.month || curMonth;
+  const count = (state.salarySlips || []).length + 1;
+  const defaultSlipNumber = prefill.slipNumber || ('MS-PAY-' + selectedMonth.replace('-', '') + '-' + String(count).padStart(3, '0'));
+
+  modal('Generate Digital Salary Slip', 'Official company payslip for team members with optional cashbook deduction.', `
+    <form id="salary-slip-form">
+      <div class="form-grid">
+        ${select('Team member', 'employeeId', state.employees.map(x => [x.id, `${x.name} (${x.role})`]), defaultEmp.id)}
+        ${field('Slip reference #', 'slipNumber', 'text', defaultSlipNumber, 'required maxlength="50"')}
+        ${field('Pay month / period', 'month', 'month', selectedMonth, 'required')}
+        ${field('Issue date', 'issueDate', 'date', prefill.issueDate || today(), 'required')}
+        ${select('Payment mode (shown on slip)', 'paymentMode', [['Bank Transfer','Bank Transfer'],['Cash','Cash'],['Cheque','Cheque'],['Digital Wallet','Digital Wallet'],['Online Transfer','Online Transfer']], prefill.paymentMode || 'Bank Transfer')}
+        ${select('Deduct from account', 'accountId', state.accounts.map(a => [a.id, a.name]), state.accounts[0]?.id)}
+      </div>
+
+      <div style="margin: 16px 0 12px; font-weight: 700; font-size: 13px; color: var(--ink); display: flex; align-items: center; gap: 8px;">
+        ${icon('wallet')} Earnings &amp; Allowances (PKR)
+      </div>
+      <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+        ${field('Basic Salary', 'basic', 'number', String((defaultEmp.salaryPaisa || 0) / 100), 'required min="0" step="0.01" placeholder="0.00"')}
+        ${field('Medical Allowance', 'medical', 'number', '0.00', 'min="0" step="0.01" placeholder="0.00"')}
+        ${field('Conveyance / Fuel', 'conveyance', 'number', '0.00', 'min="0" step="0.01" placeholder="0.00"')}
+        ${field('Performance Bonus', 'bonus', 'number', '0.00', 'min="0" step="0.01" placeholder="0.00"')}
+        ${field('Other Allowance', 'otherAllowance', 'number', '0.00', 'min="0" step="0.01" placeholder="0.00"')}
+      </div>
+
+      <div style="margin: 16px 0 12px; font-weight: 700; font-size: 13px; color: var(--ink); display: flex; align-items: center; gap: 8px;">
+        ${icon('undo')} Deductions (PKR)
+      </div>
+      <div class="form-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));">
+        ${field('Income Tax / Withholding', 'tax', 'number', '0.00', 'min="0" step="0.01" placeholder="0.00"')}
+        ${field('Advance / Loan Recovery', 'advance', 'number', '0.00', 'min="0" step="0.01" placeholder="0.00"')}
+        ${field('Unpaid Leaves / LOP', 'leaves', 'number', '0.00', 'min="0" step="0.01" placeholder="0.00"')}
+        ${field('Other Deductions', 'otherDeduction', 'number', '0.00', 'min="0" step="0.01" placeholder="0.00"')}
+      </div>
+
+      <!-- Account Deduction Control Box -->
+      <div class="card" style="padding: 14px 16px; margin: 16px 0 8px; background: var(--surface-alt); border: 1.5px solid var(--line); border-radius: 8px;">
+        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-weight: 700; font-size: 13.5px; color: var(--ink);">
+          <input type="checkbox" id="f-deduct-account" name="deductFromAccount" ${selectedMonth === curMonth ? 'checked' : ''} style="width: 18px; height: 18px; accent-color: var(--purple); cursor: pointer;">
+          <span>Deduct from company account (Record as Salary Expense in Cashbook)</span>
+        </label>
+        <div id="deduct-notice" style="margin-top: 8px; font-size: 12px; color: var(--muted); line-height: 1.5;">
+          ${selectedMonth === curMonth ? 'A salary expense transaction will be recorded in the selected account and deducted from your cash balance.' : 'No cashbook transaction will be created. Balance will remain unaffected (Ideal for old/historical slips, documentation & digital proof).'}
+        </div>
+      </div>
+
+      <!-- Realtime Net Summary Banner -->
+      <div id="slip-calc-summary" class="card" style="padding: 16px 20px; background: var(--purple-soft); border: 1.5px solid var(--purple-border); border-radius: 8px; margin: 16px 0 20px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <div style="font-size: 11px; font-weight: 800; color: var(--purple); text-transform: uppercase; letter-spacing: 0.05em;">Calculated Net Pay</div>
+            <div id="slip-calc-net" style="font-size: 24px; font-weight: 900; color: var(--purple);">${fullMoney(defaultEmp.salaryPaisa || 0)}</div>
+            <div id="slip-calc-words" style="font-size: 12px; font-style: italic; color: var(--ink-secondary); margin-top: 2px;">${amountInWords(defaultEmp.salaryPaisa || 0)}</div>
+          </div>
+          <div style="text-align: right; font-size: 12px; color: var(--muted);">
+            <div>Gross Earnings: <strong id="slip-calc-gross" style="color:var(--ink)">${fullMoney(defaultEmp.salaryPaisa || 0)}</strong></div>
+            <div>Total Deductions: <strong id="slip-calc-deductions" style="color:var(--red)">PKR 0.00</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="field full-width">
+        <label for="f-slip-notes">Notes / Remarks (Optional)</label>
+        <input id="f-slip-notes" name="notes" maxlength="200" placeholder="e.g. Monthly salary credited via online transfer" value="Monthly salary disbursement">
+      </div>
+
+      ${formEnd('Generate &amp; Preview Salary Slip')}
+    </form>
+  `, {
+    wide: true,
+    submit: async data => {
+      const emp = state.employees.find(x => x.id === data.get('employeeId'));
+      if(!emp) throw new Error('Selected employee not found.');
+
+      const month = data.get('month');
+      const basicPaisa = toPaisaOrZero(data.get('basic'));
+      const medicalPaisa = toPaisaOrZero(data.get('medical'));
+      const conveyancePaisa = toPaisaOrZero(data.get('conveyance'));
+      const bonusPaisa = toPaisaOrZero(data.get('bonus'));
+      const otherAllowancePaisa = toPaisaOrZero(data.get('otherAllowance'));
+
+      const taxPaisa = toPaisaOrZero(data.get('tax'));
+      const advancePaisa = toPaisaOrZero(data.get('advance'));
+      const leavesPaisa = toPaisaOrZero(data.get('leaves'));
+      const otherDeductionPaisa = toPaisaOrZero(data.get('otherDeduction'));
+
+      const grossPaisa = basicPaisa + medicalPaisa + conveyancePaisa + bonusPaisa + otherAllowancePaisa;
+      const totalDeductionsPaisa = taxPaisa + advancePaisa + leavesPaisa + otherDeductionPaisa;
+      const netSalaryPaisa = Math.max(0, grossPaisa - totalDeductionsPaisa);
+
+      const deductFromAccount = data.get('deductFromAccount') === 'on';
+      const accountId = deductFromAccount ? data.get('accountId') : '';
+      const acc = state.accounts.find(a => a.id === accountId);
+
+      const slip = {
+        slipNumber: data.get('slipNumber').trim(),
+        employeeId: emp.id,
+        employeeName: emp.name,
+        role: emp.role,
+        email: emp.email || '',
+        month,
+        periodLabel: formatMonthYear(month),
+        issueDate: data.get('issueDate'),
+        paymentDate: data.get('issueDate'),
+        paymentMode: data.get('paymentMode'),
+        deductFromAccount,
+        accountId: deductFromAccount ? accountId : '',
+        accountName: acc ? acc.name : '',
+        basicPaisa,
+        medicalPaisa,
+        conveyancePaisa,
+        bonusPaisa,
+        otherAllowancePaisa,
+        grossPaisa,
+        taxPaisa,
+        advancePaisa,
+        leavesPaisa,
+        otherDeductionPaisa,
+        totalDeductionsPaisa,
+        netSalaryPaisa,
+        notes: data.get('notes')?.trim() || ''
+      };
+
+      await store.addSalarySlip(slip);
+      closeModal();
+      toast(`Salary Slip #${slip.slipNumber} generated.`);
+      const created = (store.state.salarySlips || []).find(s => s.slipNumber === slip.slipNumber);
+      if(created) viewSalarySlip(created.id);
+    }
+  });
+
+  const form = $('#salary-slip-form');
+  if(!form) return;
+
+  const empSelect = form.querySelector('[name="employeeId"]');
+  const basicInput = form.querySelector('[name="basic"]');
+  const monthInput = form.querySelector('[name="month"]');
+  const slipNumberInput = form.querySelector('[name="slipNumber"]');
+  const deductCheckbox = form.querySelector('#f-deduct-account');
+  const deductNotice = form.querySelector('#deduct-notice');
+  const accountSelectWrapper = form.querySelector('[name="accountId"]')?.closest('.field');
+
+  function updateRecalculations(){
+    const b = Number(form.querySelector('[name="basic"]')?.value || 0);
+    const m = Number(form.querySelector('[name="medical"]')?.value || 0);
+    const c = Number(form.querySelector('[name="conveyance"]')?.value || 0);
+    const bn = Number(form.querySelector('[name="bonus"]')?.value || 0);
+    const oa = Number(form.querySelector('[name="otherAllowance"]')?.value || 0);
+
+    const tx = Number(form.querySelector('[name="tax"]')?.value || 0);
+    const ad = Number(form.querySelector('[name="advance"]')?.value || 0);
+    const lv = Number(form.querySelector('[name="leaves"]')?.value || 0);
+    const od = Number(form.querySelector('[name="otherDeduction"]')?.value || 0);
+
+    const gross = Math.max(0, b + m + c + bn + oa);
+    const deductions = Math.max(0, tx + ad + lv + od);
+    const net = Math.max(0, gross - deductions);
+
+    const grossPaisa = Math.round(gross * 100);
+    const dedPaisa = Math.round(deductions * 100);
+    const netPaisa = Math.round(net * 100);
+
+    const netEl = $('#slip-calc-net');
+    const grossEl = $('#slip-calc-gross');
+    const dedEl = $('#slip-calc-deductions');
+    const wordsEl = $('#slip-calc-words');
+
+    if(netEl) netEl.textContent = fullMoney(netPaisa);
+    if(grossEl) grossEl.textContent = fullMoney(grossPaisa);
+    if(dedEl) dedEl.textContent = fullMoney(dedPaisa);
+    if(wordsEl) wordsEl.textContent = amountInWords(netPaisa);
+  }
+
+  form.addEventListener('input', updateRecalculations);
+
+  if(empSelect){
+    empSelect.addEventListener('change', () => {
+      const e = state.employees.find(x => x.id === empSelect.value);
+      if(e && basicInput){
+        basicInput.value = String((e.salaryPaisa || 0) / 100);
+        updateRecalculations();
+      }
+    });
+  }
+
+  function handleDeductToggle(){
+    const isChecked = deductCheckbox.checked;
+    if(accountSelectWrapper){
+      accountSelectWrapper.style.opacity = isChecked ? '1' : '0.4';
+      accountSelectWrapper.style.pointerEvents = isChecked ? 'auto' : 'none';
+    }
+    if(deductNotice){
+      deductNotice.textContent = isChecked
+        ? 'A salary expense transaction will be recorded in the selected account and deducted from your cash balance.'
+        : 'No cashbook transaction will be created. Balance will remain unaffected (Ideal for old/historical slips, documentation & digital proof).';
+      deductNotice.style.color = isChecked ? 'var(--purple)' : 'var(--muted)';
+    }
+  }
+
+  if(deductCheckbox){
+    deductCheckbox.addEventListener('change', handleDeductToggle);
+    handleDeductToggle();
+  }
+
+  if(monthInput){
+    monthInput.addEventListener('change', () => {
+      const isPast = monthInput.value < curMonth;
+      if(isPast && deductCheckbox.checked){
+        deductCheckbox.checked = false;
+        handleDeductToggle();
+        toast('Past month selected: Account deduction turned off for historical slip.');
+      }
+      if(slipNumberInput && !slipNumberInput.dataset.manual){
+        slipNumberInput.value = 'MS-PAY-' + monthInput.value.replace('-', '') + '-' + String(count).padStart(3, '0');
+      }
+    });
+  }
+
+  if(slipNumberInput){
+    slipNumberInput.addEventListener('input', () => {
+      slipNumberInput.dataset.manual = 'true';
+    });
+  }
+}
+
+/* ==========================================================================
    OTHER DIALOGS (TRANSACTION, ACCOUNT, EMPLOYEE, PAYMENT)
    ========================================================================== */
 function showTransaction(kind='income',employeeId=''){
@@ -2144,6 +2809,13 @@ function showTransaction(kind='income',employeeId=''){
       await store.addTransaction(t);
       closeModal();
       toast('Transaction recorded.');
+      if(kind==='salary'&&emp&&data.get('generateSlip')==='on'){
+        showCreateSalarySlip(emp.id,{
+          issueDate:t.date,
+          month:t.date.slice(0,7),
+          paymentMode:'Bank Transfer'
+        });
+      }
     }
   });
 
@@ -2152,6 +2824,14 @@ function showTransaction(kind='income',employeeId=''){
     $('#tx-dynamic').innerHTML=`<div class="form-grid">
       ${k==='transfer'?select('To account','toAccountId',state.accounts.map(a=>[a.id,a.name]),state.accounts[1]?.id):select('Category','category',CATEGORIES[k].map(c=>[c,c]))}
       ${k==='salary'?select('Team member','employeeId',state.employees.map(x=>[x.id,x.name]),employeeId):k==='transfer'?field('Reference / note','party','text','Internal','maxlength="120"'):field(k==='funding'||k==='drawing'?'Owner / co-founder':'Client / paid to','party','text','','maxlength="120" placeholder="Optional name"')}
+      ${k==='salary'?`
+        <div style="grid-column:1/-1;margin-top:6px">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+            <input type="checkbox" name="generateSlip" checked style="accent-color:var(--purple);cursor:pointer">
+            <span>Also create digital salary slip for this payment</span>
+          </label>
+        </div>
+      `:''}
     </div>`;
   };
   dynamic();
@@ -2386,22 +3066,6 @@ function showAudit(){
   `);
 }
 
-function confirmDemoReset(empty){
-  modal(empty?'Clear demo records?':'Restore sample workspace?',empty?'Start with an empty browser workspace.':'Replace browser demo records with fresh sample data.',`
-    <p class="muted small">Download a JSON backup first if you need these records. This only replaces the browser demo.</p>
-    <form>
-      ${field('Type CONFIRM to continue','confirmation','text','','required pattern="CONFIRM" autocomplete="off"')}
-      ${formEnd(empty?'Clear records':'Restore samples')}
-    </form>
-  `,{
-    submit:async d=>{
-      if(d.get('confirmation')!=='CONFIRM') throw new Error('Type CONFIRM to proceed.');
-      await store.reset(empty);
-      closeModal();
-      toast(empty?'Demo records cleared.':'Sample workspace restored.');
-    }
-  });
-}
 
 function download(name,data,type='text/csv;charset=utf-8'){
   const a=document.createElement('a'), url=URL.createObjectURL(new Blob([data],{type}));
@@ -2569,6 +3233,41 @@ document.addEventListener('click',async ev=>{
       case 'download-invoice-html':
         downloadInvoice(id);
         break;
+      case 'create-salary-slip':
+        showCreateSalarySlip(id);
+        break;
+      case 'view-salary-slip':
+        viewSalarySlip(id);
+        break;
+      case 'download-salary-slip-pdf':
+        downloadSalarySlipPdf(id);
+        break;
+      case 'print-salary-slip':
+        printSalarySlip(id);
+        break;
+      case 'share-salary-slip-whatsapp':{
+        const slip = (state.salarySlips||[]).find(s=>s.id===id);
+        if(slip) window.open(getSalarySlipWhatsAppUrl(slip), '_blank');
+        break;
+      }
+      case 'delete-salary-slip':{
+        const slip = (state.salarySlips||[]).find(s=>s.id===id);
+        if(!slip) return;
+        modal('Delete salary slip', `Remove salary slip #${slip.slipNumber} for ${slip.employeeName}?`, `
+          <p>Are you sure you want to delete this salary slip? ${slip.transactionId ? 'Its linked accounting transaction will be reversed.' : 'No cashbook balances will be altered.'}</p>
+          <div class="modal-actions" style="margin-top:16px">
+            <button class="btn" data-action="close-modal">Cancel</button>
+            <button class="btn" style="background:var(--red);color:#fff" id="confirm-delete-slip">Yes, delete slip</button>
+          </div>
+        `);
+        $('#confirm-delete-slip')?.addEventListener('click', async () => {
+          await store.deleteSalarySlip(id);
+          closeModal();
+          toast('Salary slip deleted.');
+          render();
+        });
+        break;
+      }
       case 'connect':
         showConnect();
         break;
@@ -2594,16 +3293,11 @@ document.addEventListener('click',async ev=>{
         showConfigDrawer=!showConfigDrawer;
         render();
         break;
-      case 'demo-login':
-        safeStorage('metri.session','authenticated');
-        location.hash='#overview';
-        render();
-        toast('Authorized demo access granted. Welcome to MetriSolution!');
-        break;
       case 'logout':
-        if(store.mode==='firebase') await store.signOut();
+        if(store.mode==='firebase'&&store.signOut) await store.signOut().catch(()=>{});
         safeStorage('metri.session','');
-        bindStore(new DemoStore());
+        safeStorage('metri.firebase','');
+        bindStore(createWorkspaceStore());
         location.hash='#login';
         render();
         toast('Signed out. Portal locked.');
@@ -2626,12 +3320,6 @@ document.addEventListener('click',async ev=>{
         break;
       case 'due':
         location.hash='invoices';
-        break;
-      case 'clear-demo':
-        confirmDemoReset(true);
-        break;
-      case 'reset-demo':
-        confirmDemoReset(false);
         break;
     }
   }catch(err){
@@ -2772,7 +3460,7 @@ window.addEventListener('online',()=>{
 
 window.addEventListener('offline',()=>{
   render();
-  toast(store.mode==='firebase'?'Offline. Reconnect before recording company data.':'Offline. Browser demo is still available.');
+  toast('Offline. Reconnect before recording company data.');
 });
 
 bindStore(store);
@@ -2791,24 +3479,27 @@ async function checkMonthlyInvoicing(){
 setTimeout(checkMonthlyInvoicing,1200);
 
 const savedConnection=getSavedConfig();
-if(savedConnection?.config&&savedConnection.workspaceId){
+const effectiveConfig=savedConnection?.config||(firebaseConfig?.apiKey?firebaseConfig:null);
+const effectiveWorkspaceId=savedConnection?.workspaceId||'metrisolution';
+
+if(effectiveConfig&&effectiveWorkspaceId&&!globalThis.process?.versions?.node){
   import('./firebase-service.js')
-    .then(({resumeFirebase})=>resumeFirebase(savedConnection.config,savedConnection.workspaceId))
+    .then(({resumeFirebase})=>resumeFirebase(effectiveConfig,effectiveWorkspaceId))
     .then(next=>{
       if(next){
-        store.destroy();
+        store.destroy?.();
         bindStore(next);
         safeStorage('metri.session','authenticated');
-        toast('Company workspace restored.');
+        safeStorage('metri.firebase',JSON.stringify({config:effectiveConfig,workspaceId:effectiveWorkspaceId}));
+        render();
+        toast('Company workspace connected.');
       }
     })
     .catch(err=>{
       console.warn('Firebase session restore error:', err);
-      safeStorage('metri.firebase','');
-      safeStorage('metri.session','');
-      bindStore(new DemoStore());
-      location.hash='#login';
-      render();
-      toast('Cloud session expired or workspace not found. Please Sign In or Create Workspace.', true);
+      if(!isAuthenticated()){
+        location.hash='#login';
+        render();
+      }
     });
 }

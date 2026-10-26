@@ -1,4 +1,4 @@
-import {uid,today,addDays,validateTransaction,validateInvoice,validateClient,DEFAULT_BANK_INFO} from './domain.js';
+import {uid,today,addDays,validateTransaction,validateInvoice,validateClient,DEFAULT_BANK_INFO,formatMonthYear,validateSalarySlip} from './domain.js';
 const KEY='metrisolution.khata.demo.v2';
 
 export const DEFAULT_CLIENTS = [
@@ -211,6 +211,7 @@ export function emptyState(name='MetriSolution Pvt LTD') {
     reversals: [],
     invoices: [],
     employees: [],
+    salarySlips: [],
     clients: [],
     services: structuredClone(DEFAULT_SERVICES),
     audit: []
@@ -352,6 +353,69 @@ export function demoState() {
   add('sample-14', 'income', 32000, 14, 'Monthly maintenance payment', 'Invoice payment', 'Northstar Studio', 'bank', { invoiceId: 'inv-2' });
   add('sample-15', 'income', 12500, 15, 'Digital Marketing Package MetGrow · part payment', 'Invoice payment', 'Yelo Beta', 'bank', { invoiceId: 'inv-0230' });
 
+  s.salarySlips = [
+    {
+      id: 'slip-sample-1',
+      slipNumber: 'MS-PAY-' + month.replace('-', '') + '-001',
+      employeeId: 'team-1',
+      employeeName: 'Areeb Khan',
+      role: 'Full stack developer',
+      month,
+      periodLabel: formatMonthYear(month),
+      issueDate: date(7),
+      paymentDate: date(7),
+      paymentMode: 'Bank Transfer',
+      accountId: 'bank',
+      accountName: 'United Bank Limited',
+      deductFromAccount: true,
+      transactionId: 'sample-7',
+      basicPaisa: 4000000,
+      medicalPaisa: 300000,
+      conveyancePaisa: 200000,
+      bonusPaisa: 0,
+      otherAllowancePaisa: 0,
+      grossPaisa: 4500000,
+      taxPaisa: 0,
+      advancePaisa: 0,
+      leavesPaisa: 0,
+      otherDeductionPaisa: 0,
+      totalDeductionsPaisa: 0,
+      netSalaryPaisa: 4500000,
+      notes: 'Monthly developer salary credited via online bank transfer.',
+      createdAt: new Date().toISOString()
+    },
+    {
+      id: 'slip-sample-2',
+      slipNumber: 'MS-PAY-202609-002',
+      employeeId: 'team-3',
+      employeeName: 'Daniyal Ali',
+      role: 'Marketing associate',
+      month: '2026-09',
+      periodLabel: 'September 2026',
+      issueDate: '2026-09-30',
+      paymentDate: '2026-09-30',
+      paymentMode: 'Bank Transfer',
+      accountId: '',
+      accountName: 'United Bank Limited',
+      deductFromAccount: false,
+      transactionId: '',
+      basicPaisa: 2200000,
+      medicalPaisa: 200000,
+      conveyancePaisa: 100000,
+      bonusPaisa: 0,
+      otherAllowancePaisa: 0,
+      grossPaisa: 2500000,
+      taxPaisa: 0,
+      advancePaisa: 0,
+      leavesPaisa: 0,
+      otherDeductionPaisa: 0,
+      totalDeductionsPaisa: 0,
+      netSalaryPaisa: 2500000,
+      notes: 'Historical digital pay slip issued for record and documentation purposes.',
+      createdAt: new Date().toISOString()
+    }
+  ];
+
   s.audit = [{
     id: 'sample-audit',
     action: 'Sample workspace loaded',
@@ -370,6 +434,7 @@ export function loadDemo() {
       const s = JSON.parse(raw);
       if (s.version === 2 && Array.isArray(s.accounts) && Array.isArray(s.transactions)) {
         if (!s.services || !s.services.length) s.services = structuredClone(DEFAULT_SERVICES);
+        if (!s.salarySlips) s.salarySlips = [];
         return s;
       }
     }
@@ -606,6 +671,59 @@ export class DemoStore {
     return this.mutate('Company updated', name, s => {
       s.company.name = name;
       if (bankInfo) s.company.bankInfo = { ...(s.company.bankInfo || DEFAULT_BANK_INFO), ...bankInfo };
+    });
+  }
+
+  async addSalarySlip(slip) {
+    validateSalarySlip(slip, this.state);
+    const id = uid();
+    const fullSlip = {
+      ...slip,
+      id,
+      createdAt: new Date().toISOString()
+    };
+
+    return this.mutate('Salary slip generated', `${fullSlip.slipNumber} · ${fullSlip.employeeName}`, s => {
+      s.salarySlips = s.salarySlips || [];
+      if (fullSlip.deductFromAccount) {
+        const txId = uid();
+        fullSlip.transactionId = txId;
+        const acc = s.accounts.find(a => a.id === fullSlip.accountId);
+        fullSlip.accountName = acc ? acc.name : '';
+        s.transactions.push({
+          id: txId,
+          kind: 'salary',
+          amountPaisa: fullSlip.netSalaryPaisa,
+          date: fullSlip.issueDate || today(),
+          description: `Salary Slip ${fullSlip.slipNumber} · ${fullSlip.employeeName} (${fullSlip.periodLabel || fullSlip.month})`.slice(0, 180),
+          category: 'Salary payment',
+          party: fullSlip.employeeName,
+          accountId: fullSlip.accountId,
+          toAccountId: '',
+          employeeId: fullSlip.employeeId,
+          invoiceId: '',
+          salarySlipId: id,
+          createdAt: new Date().toISOString(),
+          createdBy: this.user.uid
+        });
+      }
+      s.salarySlips.push(fullSlip);
+    });
+  }
+
+  async deleteSalarySlip(id) {
+    const slip = (this.state.salarySlips || []).find(s => s.id === id);
+    if (!slip) throw new Error('Salary slip not found.');
+    return this.mutate('Salary slip removed', `${slip.slipNumber} · ${slip.employeeName}`, s => {
+      s.salarySlips = (s.salarySlips || []).filter(x => x.id !== id);
+      if (slip.transactionId) {
+        s.reversals.push({
+          transactionId: slip.transactionId,
+          reason: `Reversed upon deleting Salary Slip #${slip.slipNumber}`,
+          createdBy: this.user.uid,
+          createdAt: new Date().toISOString()
+        });
+      }
     });
   }
 

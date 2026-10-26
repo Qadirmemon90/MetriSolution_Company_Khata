@@ -43,7 +43,8 @@ test('all screens, services, invoice generator and portal authentication lock re
     winListeners.hashchange();
     const html = nodes.get('#app').innerHTML;
     assert.ok(html.includes(title), route);
-    assert.ok(html.includes('Demo workspace'), route);
+    assert.ok(!html.includes('Demo workspace'), route);
+    assert.ok(html.includes('Cloud workspace') || html.includes('Company workspace'), route);
     assert.ok(!html.includes('NaN'), route);
     assert.ok(!html.includes('PKR undefined'), route);
   }
@@ -57,11 +58,28 @@ test('all screens, services, invoice generator and portal authentication lock re
   assert.ok(servicesHtml.includes('E-Commerce Website Development'), 'Ecommerce service present');
   assert.ok(servicesHtml.includes('Social Media Marketing'), 'SMM service present');
 
+  // Verify Team & Digital Salary Slip system
+  location.hash = '#team';
+  winListeners.hashchange();
+  const teamHtml = nodes.get('#app').innerHTML;
+  assert.ok(teamHtml.includes('Digital Salary Slips'), 'Digital Salary Slips section present on team page');
+  assert.ok(teamHtml.includes('Create salary slip'), 'Create salary slip action button present');
+  assert.ok(teamHtml.includes('MS-PAY-'), 'Seeded salary slips rendered in table');
+
   // Verify Dialogs
-  for (const action of ['add-account', 'add-employee', 'connect', 'audit', 'create-invoice', 'add-service', 'add-client']) {
+  for (const action of ['add-account', 'add-employee', 'connect', 'audit', 'create-invoice', 'add-service', 'add-client', 'create-salary-slip']) {
     await docListeners.click({ target: { closest: s => s === '[data-action]' ? { dataset: { action } } : null } });
     assert.ok(nodes.get('#modal-root').innerHTML.includes('role="dialog"'), action);
   }
+
+  // Verify Salary Slip Modal
+  await docListeners.click({ target: { closest: s => s === '[data-action]' ? { dataset: { action: 'view-salary-slip', id: 'slip-sample-1' } } : null } });
+  const salarySlipModalHtml = nodes.get('#modal-root').innerHTML;
+  assert.ok(salarySlipModalHtml.includes('SALARY SLIP'), 'Salary slip modal rendered');
+  assert.ok(salarySlipModalHtml.includes('Areeb Khan'), 'Employee name on salary slip');
+  assert.ok(salarySlipModalHtml.includes('CONFIDENTIAL PAYSLIP'), 'Confidential badge on salary slip');
+  assert.ok(salarySlipModalHtml.includes('Download PDF'), 'Download PDF button present on salary slip');
+  assert.ok(salarySlipModalHtml.includes('Print / System PDF'), 'Print button present on salary slip');
 
   // Verify Dynamic Invoice Note and Bank Details (matching user's screenshot)
   await docListeners.click({ target: { closest: s => s === '[data-action]' ? { dataset: { action: 'view-invoice', id: 'inv-0230' } } : null } });
@@ -78,5 +96,7 @@ test('all screens, services, invoice generator and portal authentication lock re
   const lockedHtml = nodes.get('#app').innerHTML;
   assert.ok(lockedHtml.includes('standalone-login-form'), 'portal is locked when unauthenticated');
   assert.ok(lockedHtml.includes('Sign in to your company'), 'shows sign in screen when unauthenticated');
-  assert.ok(lockedHtml.includes('Sign In with Demo Account'), 'authorized demo access button present');
+  assert.ok(!lockedHtml.includes('Sign In with Demo Account'), 'demo access button is removed');
+  assert.ok(!lockedHtml.includes('demo-login'), 'demo login action is removed');
+  assert.ok(lockedHtml.includes('Secured with Firebase Authentication'), 'shows secure Firebase notice');
 });

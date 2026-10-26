@@ -1,5 +1,5 @@
 import {emptyState,DEFAULT_CLIENTS,DEFAULT_SERVICES} from './data.js';
-import {uid,validateTransaction,validateInvoice,validateClient,addDays} from './domain.js';
+import {uid,validateTransaction,validateInvoice,validateClient,addDays,validateSalarySlip} from './domain.js';
 const SDK='13.0.0'; // Version documented by Firebase web setup on 2026-10-16.
 let modulesPromise;
 async function sdk(){return modulesPromise??=Promise.all([import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-app.js`),import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-auth.js`),import(`https://www.gstatic.com/firebasejs/${SDK}/firebase-firestore.js`)]).then(([app,auth,db])=>({...app,...auth,...db}));}
@@ -49,7 +49,7 @@ class FirebaseStore {
   async start(){
     const f=this.f;
     const initial=[new Promise((resolve,reject)=>{let first=true;this.unsubs.push(f.onSnapshot(f.doc(this.db,'companies',this.id),snap=>{this.state.company={...snap.data()};this.notify();if(first){first=false;resolve();}},e=>{if(first)reject(e);else this.onError?.(e);}));})];
-    for(const collection of ['accounts','transactions','reversals','invoices','employees','audit','services','clients']){
+    for(const collection of ['accounts','transactions','reversals','invoices','employees','audit','services','clients','salarySlips']){
       initial.push(new Promise((resolve,reject)=>{let first=true;this.unsubs.push(f.onSnapshot(f.collection(this.db,'companies',this.id,collection),snap=>{
         const mapped = snap.docs.map(d=>{const data=d.data();return {...data,id:d.id,...(data.createdAt?.toDate?{createdAt:data.createdAt.toDate().toISOString()}:{})};});
         if(mapped.length>0){this.state[collection]=mapped;}
@@ -208,6 +208,55 @@ class FirebaseStore {
     batch.update(this.f.doc(this.db,'companies',this.id),patch);
     this.audit(batch,id,'Company updated',name);
     await batch.commit();
+  }
+  async addSalarySlip(slip){
+    this.requireWrite();
+    validateSalarySlip(slip,this.state);
+    const id=uid(),fullSlip={...slip,id,...this.stamp()};
+    if(fullSlip.deductFromAccount){
+      const batch=this.f.writeBatch(this.db),txId=uid();
+      fullSlip.transactionId=txId;
+      const acc=(this.state.accounts||[]).find(a=>a.id===fullSlip.accountId);
+      fullSlip.accountName=acc?acc.name:'';
+      batch.set(this.ref('salarySlips',id),fullSlip);
+      batch.set(this.ref('transactions',txId),{
+        id:txId,
+        kind:'salary',
+        amountPaisa:fullSlip.netSalaryPaisa,
+        date:fullSlip.issueDate||new Date().toISOString().slice(0,10),
+        description:`Salary Slip ${fullSlip.slipNumber} · ${fullSlip.employeeName} (${fullSlip.periodLabel||fullSlip.month})`.slice(0,180),
+        category:'Salary payment',
+        party:fullSlip.employeeName,
+        accountId:fullSlip.accountId,
+        toAccountId:'',
+        employeeId:fullSlip.employeeId,
+        invoiceId:'',
+        salarySlipId:id,
+        ...this.stamp()
+      });
+      this.audit(batch,id,'Salary slip generated',`${fullSlip.slipNumber} · ${fullSlip.employeeName}`);
+      this.audit(batch,txId,'Salary payment',`${fullSlip.slipNumber} · ${fullSlip.employeeName}`);
+      return batch.commit();
+    }
+    return this.commit('salarySlips',fullSlip,'Salary slip generated',`${fullSlip.slipNumber} · ${fullSlip.employeeName}`);
+  }
+  async deleteSalarySlip(id){
+    this.requireWrite();
+    const slip=(this.state.salarySlips||[]).find(s=>s.id===id);
+    if(!slip)throw new Error('Salary slip not found.');
+    const batch=this.f.writeBatch(this.db);
+    batch.delete(this.ref('salarySlips',id));
+    if(slip.transactionId){
+      const txId=slip.transactionId;
+      batch.set(this.ref('reversals',txId),{
+        transactionId:txId,
+        reason:`Reversed upon deleting Salary Slip #${slip.slipNumber}`.slice(0,300),
+        ...this.stamp()
+      });
+      this.audit(batch,'reverse-'+txId,'Transaction reversed',`Salary Slip #${slip.slipNumber}`.slice(0,180));
+    }
+    this.audit(batch,id,'Salary slip removed',slip.slipNumber);
+    return batch.commit();
   }
   async signOut(){this.destroy();await this.f.signOut(this.auth);}
   destroy(){this.unsubs.forEach(f=>f());this.unsubs=[];this.listeners.clear();}

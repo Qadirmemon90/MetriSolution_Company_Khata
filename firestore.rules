@@ -137,25 +137,33 @@ service cloud.firestore {
       );
     }
 
-    function member(c) {
+    function isCompanyOwner(c) {
       return signedIn() && (
         isPlatformAdmin() ||
+        (exists(/databases/$(database)/documents/companies/$(c))
+         && get(/databases/$(database)/documents/companies/$(c)).data.ownerUid == request.auth.uid)
+      );
+    }
+
+    function member(c) {
+      return signedIn() && (
+        isCompanyOwner(c) ||
         exists(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid))
       );
     }
 
     function role(c) {
-      return isPlatformAdmin()
+      return isCompanyOwner(c)
         ? 'owner'
         : get(/databases/$(database)/documents/companies/$(c)/members/$(request.auth.uid)).data.role;
     }
 
     function writer(c) {
-      return member(c) && (isPlatformAdmin() || role(c) in ['owner', 'accountant']);
+      return member(c) && (isCompanyOwner(c) || role(c) in ['owner', 'accountant']);
     }
 
     function owner(c) {
-      return member(c) && (isPlatformAdmin() || role(c) == 'owner');
+      return member(c) && (isCompanyOwner(c) || role(c) == 'owner');
     }
 
     function text(value, size) {
@@ -289,6 +297,16 @@ service cloud.firestore {
       // -------------------------------------------------------------
       // Employees subcollection
       // -------------------------------------------------------------
+      // -------------------------------------------------------------
+      // Salary Slips subcollection
+      // -------------------------------------------------------------
+      match /salarySlips/{id} {
+        allow read: if member(companyId);
+        allow create: if writer(companyId) && request.resource.data.id == id;
+        allow delete: if writer(companyId);
+        allow update: if false;
+      }
+
       match /employees/{id} {
         allow read: if member(companyId);
         allow create: if writer(companyId)
@@ -415,7 +433,7 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly([
             'id', 'kind', 'amountPaisa', 'date', 'description', 'category',
             'party', 'accountId', 'toAccountId', 'employeeId', 'invoiceId',
-            'createdAt', 'createdBy'
+            'salarySlipId', 'createdAt', 'createdBy'
           ])
           && request.resource.data.id == id && stamp(request.resource.data)
           && request.resource.data.kind in ['income', 'expense', 'funding', 'drawing', 'transfer', 'salary']
@@ -430,10 +448,14 @@ service cloud.firestore {
           && ((request.resource.data.kind == 'salary'
                && exists(/databases/$(database)/documents/companies/$(companyId)/employees/$(request.resource.data.employeeId)))
               || (request.resource.data.kind != 'salary' && request.resource.data.employeeId == ''))
-          && (request.resource.data.invoiceId == ''
+          && (!('invoiceId' in request.resource.data)
+              || request.resource.data.invoiceId == ''
               || (request.resource.data.kind == 'income'
                   && validInvoiceReceipt(companyId, request.resource.data.invoiceId, id, request.resource.data.amountPaisa)))
-          && audited(companyId, id);
+          && (!('salarySlipId' in request.resource.data)
+              || optionalText(request.resource.data.salarySlipId, 64))
+          && (audited(companyId, id)
+              || ('salarySlipId' in request.resource.data && audited(companyId, request.resource.data.salarySlipId)));
 
         allow update, delete: if false;
       }
@@ -449,7 +471,8 @@ service cloud.firestore {
           && request.resource.data.transactionId == id && stamp(request.resource.data)
           && text(request.resource.data.reason, 300)
           && exists(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id))
-          && (get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.invoiceId == ''
+          && (!('invoiceId' in get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data)
+              || get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.invoiceId == ''
               || validInvoiceReversal(companyId,
                  get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.invoiceId,
                  id, get(/databases/$(database)/documents/companies/$(companyId)/transactions/$(id)).data.amountPaisa))

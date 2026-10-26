@@ -128,3 +128,94 @@ export function expenseGroups(state,period) {
   const out={};for(const t of activeTransactions(state).filter(t=>['expense','salary'].includes(t.kind)&&inPeriod(t,period)))out[t.category]=(out[t.category]||0)+t.amountPaisa;
   return Object.entries(out).sort((a,b)=>b[1]-a[1]);
 }
+
+export function toPaisaOrZero(value) {
+  if (value === undefined || value === null || value === '' || Number(value) === 0) return 0;
+  return toPaisa(value);
+}
+
+export function formatMonthYear(monthStr) {
+  if (!monthStr || !/^\d{4}-\d{2}$/.test(monthStr)) return monthStr || '';
+  const [y, m] = monthStr.split('-');
+  const d = new Date(Date.UTC(Number(y), Number(m) - 1, 1, 12, 0, 0));
+  return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(d);
+}
+
+export function amountInWords(paisa) {
+  const amount = Math.floor((paisa || 0) / 100);
+  if (amount === 0) return 'Zero Rupees Only';
+  if (amount < 0) return 'Negative Amount';
+
+  const units = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
+    'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  function convertSection(num) {
+    let str = '';
+    if (num >= 100) {
+      str += units[Math.floor(num / 100)] + ' Hundred ';
+      num %= 100;
+    }
+    if (num >= 20) {
+      str += tens[Math.floor(num / 10)] + (num % 10 !== 0 ? '-' + units[num % 10] : '') + ' ';
+    } else if (num > 0) {
+      str += units[num] + ' ';
+    }
+    return str.trim();
+  }
+
+  let remaining = amount;
+  const parts = [];
+
+  const billions = Math.floor(remaining / 1000000000);
+  if (billions > 0) {
+    parts.push(convertSection(billions) + ' Billion');
+    remaining %= 1000000000;
+  }
+
+  const millions = Math.floor(remaining / 1000000);
+  if (millions > 0) {
+    parts.push(convertSection(millions) + ' Million');
+    remaining %= 1000000;
+  }
+
+  const thousands = Math.floor(remaining / 1000);
+  if (thousands > 0) {
+    parts.push(convertSection(thousands) + ' Thousand');
+    remaining %= 1000;
+  }
+
+  if (remaining > 0) {
+    parts.push(convertSection(remaining));
+  }
+
+  return parts.join(' ').trim() + ' Pakistani Rupees Only';
+}
+
+export function validateSalarySlip(slip, state) {
+  if (!slip.employeeId || !state.employees.some(e => e.id === slip.employeeId)) {
+    throw new Error('Choose an existing team member.');
+  }
+  if (!slip.month || !/^\d{4}-\d{2}$/.test(slip.month)) {
+    throw new Error('Select a valid pay period (YYYY-MM).');
+  }
+  if (slip.issueDate) validateDate(slip.issueDate);
+  if (!Number.isSafeInteger(slip.basicPaisa) || slip.basicPaisa < 0) {
+    throw new Error('Basic salary must be a non-negative amount.');
+  }
+  if (slip.netSalaryPaisa !== undefined && (!Number.isSafeInteger(slip.netSalaryPaisa) || slip.netSalaryPaisa < 0)) {
+    throw new Error('Net payable salary must be a non-negative amount.');
+  }
+  if (slip.deductFromAccount) {
+    if (!slip.accountId || !state.accounts.some(a => a.id === slip.accountId)) {
+      throw new Error('Choose an account to deduct this salary from.');
+    }
+    if (!slip.netSalaryPaisa || slip.netSalaryPaisa <= 0) {
+      throw new Error('Net payable salary must be greater than 0 to deduct from account.');
+    }
+    if (slip.issueDate && slip.issueDate > today()) {
+      throw new Error('Transactions cannot be future-dated.');
+    }
+  }
+  return slip;
+}
